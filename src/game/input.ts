@@ -6,10 +6,9 @@ export interface SteerInput {
 }
 
 /**
- * FR-002: the ship steers from the numeric keypad — 8 up, 5 down, 4 left, 6 right. Down was 2 in the
- * first draft of the PRD; 4, 5 and 6 share a row with 8 directly above 5, so 8/4/5/6 forms the
- * inverted T that arrow keys and WASD have trained every player to expect, and the PRD was revised
- * to match.
+ * FR-002: the ship steers from the numeric keypad — 8 up, 5 down, 4 left, 6 right. 4, 5 and 6 share
+ * a row with 8 directly above 5, so the four keys form the inverted T that arrow keys and WASD have
+ * trained every player to expect.
  *
  * Keys are matched on `event.code` rather than `event.key` on purpose: `key` reports the numpad
  * digits as arrow names when NumLock is off, which would silently break steering on half the

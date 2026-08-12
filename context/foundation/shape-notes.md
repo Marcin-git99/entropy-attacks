@@ -31,7 +31,7 @@ checkpoint:
     - topic: "extras priority"
       decision: "if only one extra survives the second week, it is sound"
     - topic: "steering keys"
-      decision: "numeric keypad matching the physical key layout — 8 up, 2 down, 4 left, 6 right"
+      decision: "numeric keypad matching the physical key layout — 8 up, 5 down, 4 left, 6 right"
     - topic: "rocket behaviour"
       decision: "homing; a fired rocket always hits, and wasting one early is the player's own loss"
     - topic: "wave size"
@@ -131,7 +131,7 @@ Primary persona: an AI developer / AI DevOps engineer. Reached through a public 
 ### Flying and fighting
 
 - FR-001: The player can start a new run from the title screen. Priority: must-have
-- FR-002: The player can steer the ship on two axes from the numeric keypad — 8 up, 2 down, 4 left, 6 right. Priority: must-have
+- FR-002: The player can steer the ship on two axes from the numeric keypad — 8 up, 5 down, 4 left, 6 right. Priority: must-have
 - FR-003: The player can see approaching threats on the radar before they are visible through the canopy. Priority: must-have
   > Socratic: Counter-argument considered: "the radar duplicates the canopy view and forces two coordinate systems to stay in sync — expensive in a two-week budget." Resolution: kept, but coarse — direction and distance are approximate rather than a faithful projection. The narrative value and the distance-to-centre reading survive; the costly part does not.
 - FR-004: The player can see a threat through the canopy, growing larger and harder to hold in the crosshair as it closes, with a mounting sense of speed as it flies past. Priority: must-have

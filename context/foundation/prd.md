@@ -83,7 +83,7 @@ Because every copy of the game lives entirely on the player's own machine, the a
 
 - FR-001: The player can start a new run from the title screen. Priority: must-have
 - FR-002: The player can steer the ship on two axes from the numeric keypad — 8 up, 5 down, 4 left, 6 right. Priority: must-have
-  > Revised during implementation: down was originally 2. Moved to 5 because 4, 5 and 6 share a row with 8 directly above 5, so the four keys form the inverted T that arrow keys and WASD have trained players to expect. Reaching down to 2 breaks the hand position, which matters when a first-time player has to work the controls out unaided.
+  > Rationale: 4, 5 and 6 share a row with 8 directly above 5, so the four keys form the inverted T that arrow keys and WASD have trained players to expect. A layout that puts down a row lower breaks the hand position, which matters when a first-time player has to work the controls out unaided.
 - FR-003: The player can see approaching threats on the radar before they are visible through the canopy. Priority: must-have
   > Socratic: Counter-argument considered: "the radar duplicates the canopy view and forces two coordinate systems to stay in sync — expensive in a two-week budget." Resolution: kept, but coarse — direction and distance are approximate rather than a faithful projection. The narrative value and the distance-to-centre reading survive; the costly part does not.
 - FR-004: The player can see a threat through the canopy, growing larger and harder to hold in the crosshair as it closes, with a mounting sense of speed as it flies past. Priority: must-have
