@@ -7,6 +7,8 @@ const PAPER = "#fff";
 /** Canopy occupies the top of the frame; the instrument strip takes the rest. Proportions follow the mockups. */
 const CANOPY_HEIGHT = 0.72;
 const MARGIN = 0.02;
+/** Threat radius in world units, divided by distance to get its apparent size in the canopy. */
+const THREAT_RADIUS = 0.16;
 
 export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height: number, state: GameState): void {
   ctx.fillStyle = PAPER;
@@ -53,15 +55,18 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
   const centreY = canopy.y + canopy.h / 2;
   const unit = canopy.h / 2;
 
+  // Perspective divide: a threat's bearing is its lateral offset over its distance, so both its
+  // position and its size fall out of z. Nothing here fakes the approach — it is the projection.
+  const { threat } = state;
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
   ctx.clip();
   drawThreat(
     ctx,
-    centreX + (state.threat.x - state.view.x) * unit,
-    centreY + (state.threat.y - state.view.y) * unit,
-    unit * 0.16,
+    centreX + (threat.x / threat.z - state.view.x) * unit,
+    centreY + (threat.y / threat.z - state.view.y) * unit,
+    (THREAT_RADIUS / threat.z) * unit,
   );
   ctx.restore();
 
