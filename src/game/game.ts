@@ -1,4 +1,4 @@
-import { createInput, type SteerInput } from "./input";
+import { createInput, type Controls, type SteerInput } from "./input";
 import { drawCockpit } from "./render";
 
 export interface Threat {
@@ -12,17 +12,33 @@ export interface Threat {
   z: number;
 }
 
+/** A destroyed threat, held on screen for a moment where it died. FR-008. */
+export interface Burst {
+  x: number;
+  y: number;
+  z: number;
+  /** Seconds since the kill; drives the expansion and ends the burst. */
+  age: number;
+}
+
 export interface GameState {
   /** How far the view has panned from dead ahead, in canopy half-heights. */
   view: { x: number; y: number };
-  threat: Threat;
+  /** Null while a burst is playing — the threat is gone and the next one has not entered yet. */
+  threat: Threat | null;
+  burst: Burst | null;
+  ammo: { cannon: number; rocket: number };
+  /** FR-005: whether the threat sits inside the crosshair right now. Recomputed every frame. */
+  locked: boolean;
+  /** Seconds left on the cannon tracer, so a miss is visible and not just a number going down. */
+  flash: number;
   fps: number;
 }
 
 /** Canopy half-heights per second. Tuned by eye; the PRD leaves the balance open. */
 const PAN_SPEED = 0.9;
-/** How far off dead ahead the ship can look before the canopy frame stops it. */
-const PAN_LIMIT = 1.4;
+/** How far off dead ahead the ship can look before the canopy frame stops it. Exported: it is the radar's dial edge too — past this, no amount of steering reaches the target. */
+export const PAN_LIMIT = 1.4;
 
 /**
  * Maps held keys to view movement. This is the direct model: a key press moves the view this frame,
@@ -44,14 +60,40 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-/** World units per second. Tuned so a threat crosses the whole approach in roughly five seconds. */
-const THREAT_SPEED = 2;
-/** Where a threat enters, far enough out to be a speck in the canopy. */
-const THREAT_SPAWN_Z = 10;
-/** The ship's plane. Below this the threat has passed — US-02's "reaches the centre". */
-const THREAT_PASS_Z = 0.4;
-/** How far off the flight path a threat can be and still be worth aiming at. */
-const THREAT_SPREAD = 1.1;
+/** World units per second. From the original tuning (2): +50% → 3, -30% → 2.1, +20% → 2.52. Per the user's requests, in order. */
+const THREAT_SPEED = 2.52;
+/** Where a threat enters, far enough out to be a speck in the canopy. Exported for the radar's distance ring. */
+export const THREAT_SPAWN_Z = 10;
+/** The ship's plane. Below this the threat has passed — US-02's "reaches the centre". Also the radar's centre. */
+export const THREAT_PASS_Z = 0.4;
+/**
+ * How far off the flight path a threat can be and still be worth aiming at, in world units. Direction
+ * (atan2 of x, y) is fixed for the whole flight, so this is what decides how far from dead-ahead a
+ * threat can enter — the reason FR-003's radar exists is to give the player a heads-up before a wide
+ * entry like this is anywhere near canopy-visible.
+ *
+ * Bounded so a threat is still inside the *canopy* (not the crosshair) at spawn — bearing = offset /
+ * THREAT_SPAWN_Z must clear the canopy's vertical half-extent (~1) with margin, or it would swing past
+ * without ever being on screen at all. Steering (±PAN_LIMIT) is what then has to close the rest of the
+ * gap down to the crosshair; that's the "go find it" FR-003 is asking for, not a static wait.
+ */
+const THREAT_SPREAD = 6;
+
+/**
+ * The crosshair window, measured from the centre of the view in canopy half-heights. Game logic owns
+ * these numbers and `render.ts` draws the reticle to them, never the other way round: what the player
+ * aims at has to be the same rectangle the shot is tested against, or FR-005 lies.
+ */
+export const RETICLE = { halfWidth: 0.32, halfHeight: 0.22 };
+
+/** Rounds carried, per FR-006 and FR-007. */
+const CANNON_ROUNDS = 16;
+const ROCKET_ROUNDS = 3;
+
+/** How long a kill stays on screen before the next threat enters. Exported so the drawing ends with it. */
+export const BURST_TIME = 0.6;
+/** How long the cannon tracer is drawn. Short enough to read as a shot, not a beam. */
+const FLASH_TIME = 0.08;
 
 /**
  * FR-004, and the geometry behind the PRD's cost-of-delay rule.
@@ -67,22 +109,75 @@ const THREAT_SPREAD = 1.1;
  */
 export function advanceThreat(threat: Threat, dt: number): void {
   threat.z -= THREAT_SPEED * dt;
-  if (threat.z <= THREAT_PASS_Z) respawnThreat(threat);
 }
 
-/** Placeholder until FR-012 brings a real wave: one threat, recycled, so the approach is repeatable. */
-function respawnThreat(threat: Threat): void {
-  threat.x = (Math.random() * 2 - 1) * THREAT_SPREAD;
-  threat.y = (Math.random() * 2 - 1) * THREAT_SPREAD;
-  threat.z = THREAT_SPAWN_Z;
+/** True once the threat has reached the ship's plane — US-02's infection, not yet paid for. */
+export function hasPassed(threat: Threat): boolean {
+  return threat.z <= THREAT_PASS_Z;
+}
+
+/** Placeholder until FR-012 brings a real wave: one threat at a time, so the approach is repeatable. */
+function spawnThreat(): Threat {
+  return {
+    x: (Math.random() * 2 - 1) * THREAT_SPREAD,
+    y: (Math.random() * 2 - 1) * THREAT_SPREAD,
+    z: THREAT_SPAWN_Z,
+  };
+}
+
+/**
+ * FR-005. A threat counts as inside the crosshair when its *centre* falls in the reticle window —
+ * its apparent size is deliberately not part of the test.
+ *
+ * The alternative, counting any overlap between the threat and the reticle, would make a close
+ * threat easier to hit precisely because it had grown large, which inverts the lesson the game
+ * exists to teach. With the centre rule the bearing is what matters, and bearing sweeps as 1/z²:
+ * late kills are harder, exactly as the Business Logic section promises. This is a settled rule.
+ */
+export function isInReticle(threat: Threat, view: GameState["view"]): boolean {
+  const bearingX = threat.x / threat.z - view.x;
+  const bearingY = threat.y / threat.z - view.y;
+  return Math.abs(bearingX) <= RETICLE.halfWidth && Math.abs(bearingY) <= RETICLE.halfHeight;
+}
+
+/**
+ * FR-006. The round is spent before the hit is tested, which is the point of US-01's second
+ * acceptance criterion: a shot into empty sky costs exactly as much as a shot that lands.
+ */
+export function fireCannon(state: GameState): void {
+  if (state.ammo.cannon <= 0) return;
+  state.ammo.cannon -= 1;
+  state.flash = FLASH_TIME;
+  if (state.threat !== null && isInReticle(state.threat, state.view)) destroy(state, state.threat);
+}
+
+/** FR-007: homing, so it always hits — the skill is in deciding whether one of the three is worth it. */
+export function fireRocket(state: GameState): void {
+  if (state.ammo.rocket <= 0 || state.threat === null) return;
+  state.ammo.rocket -= 1;
+  destroy(state, state.threat);
+}
+
+function destroy(state: GameState, threat: Threat): void {
+  state.burst = { x: threat.x, y: threat.y, z: threat.z, age: 0 };
+  state.threat = null;
+  state.locked = false;
 }
 
 export function start(canvas: HTMLCanvasElement): void {
   const ctx = canvas.getContext("2d");
   if (ctx === null) throw new Error("Canvas 2D context unavailable");
 
-  const input = createInput(window);
-  const state: GameState = { view: { x: 0, y: 0 }, threat: { x: 0.8, y: -0.5, z: THREAT_SPAWN_Z }, fps: 0 };
+  const controls = createInput(window);
+  const state: GameState = {
+    view: { x: 0, y: 0 },
+    threat: { x: 0.8, y: -0.5, z: THREAT_SPAWN_Z },
+    burst: null,
+    ammo: { cannon: CANNON_ROUNDS, rocket: ROCKET_ROUNDS },
+    locked: false,
+    flash: 0,
+    fps: 0,
+  };
 
   const resize = () => {
     const dpr = window.devicePixelRatio;
@@ -102,8 +197,9 @@ export function start(canvas: HTMLCanvasElement): void {
     const dt = Math.min((now - previous) / 1000, 0.1);
     previous = now;
 
-    applySteering(state.view, input, dt);
-    advanceThreat(state.threat, dt);
+    applySteering(state.view, controls.steer, dt);
+    fireArmedWeapons(state, controls);
+    advance(state, dt);
 
     framesSinceSample += 1;
     secondsSinceSample += dt;
@@ -118,4 +214,38 @@ export function start(canvas: HTMLCanvasElement): void {
   };
 
   requestAnimationFrame(frame);
+}
+
+/**
+ * Steering is read as held state, but a shot is an event, so the frame loop consumes it. Firing
+ * before the world advances means the player is shooting at the frame they were shown, which is
+ * what the 50 ms response requirement is really about.
+ */
+function fireArmedWeapons(state: GameState, controls: Controls): void {
+  if (controls.armed.cannon) {
+    controls.armed.cannon = false;
+    fireCannon(state);
+  }
+  if (controls.armed.rocket) {
+    controls.armed.rocket = false;
+    fireRocket(state);
+  }
+}
+
+function advance(state: GameState, dt: number): void {
+  state.flash = Math.max(0, state.flash - dt);
+
+  if (state.burst !== null) {
+    state.burst.age += dt;
+    if (state.burst.age >= BURST_TIME) {
+      state.burst = null;
+      state.threat = spawnThreat();
+    }
+    return;
+  }
+
+  if (state.threat === null) return;
+  advanceThreat(state.threat, dt);
+  if (hasPassed(state.threat)) state.threat = spawnThreat();
+  state.locked = isInReticle(state.threat, state.view);
 }

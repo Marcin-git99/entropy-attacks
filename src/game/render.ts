@@ -1,8 +1,10 @@
-import type { GameState } from "./game";
+import { BURST_TIME, PAN_LIMIT, RETICLE, THREAT_PASS_Z, THREAT_SPAWN_Z, type GameState, type Threat } from "./game";
 
 /** Flat black-outline style, per the PRD non-goal that rules out photorealistic art. */
 const INK = "#000";
 const PAPER = "#fff";
+/** The cockpit's single accent. Red carries meaning everywhere in this game: a lit crosshair, and later the radar and the cracks. */
+const ALERT = "#d40000";
 
 /** Canopy occupies the top of the frame; the instrument strip takes the rest. Proportions follow the mockups. */
 const CANOPY_HEIGHT = 0.72;
@@ -33,7 +35,7 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height
   ctx.lineJoin = "round";
 
   drawCanopy(ctx, canopy, state);
-  drawInstrumentStrip(ctx, strip);
+  drawInstrumentStrip(ctx, strip, state);
   drawFrameRate(ctx, canopy, state.fps);
 }
 
@@ -55,50 +57,78 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
   const centreY = canopy.y + canopy.h / 2;
   const unit = canopy.h / 2;
 
-  // Perspective divide: a threat's bearing is its lateral offset over its distance, so both its
-  // position and its size fall out of z. Nothing here fakes the approach — it is the projection.
-  const { threat } = state;
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
   ctx.clip();
-  drawThreat(
-    ctx,
-    centreX + (threat.x / threat.z - state.view.x) * unit,
-    centreY + (threat.y / threat.z - state.view.y) * unit,
-    (THREAT_RADIUS / threat.z) * unit,
-  );
+
+  // Perspective divide: a threat's bearing is its lateral offset over its distance, so both its
+  // position and its size fall out of z. Nothing here fakes the approach — it is the projection.
+  const { threat, burst } = state;
+  if (threat !== null) {
+    drawThreat(
+      ctx,
+      centreX + (threat.x / threat.z - state.view.x) * unit,
+      centreY + (threat.y / threat.z - state.view.y) * unit,
+      (THREAT_RADIUS / threat.z) * unit,
+    );
+  }
+  if (burst !== null) {
+    drawBurst(
+      ctx,
+      centreX + (burst.x / burst.z - state.view.x) * unit,
+      centreY + (burst.y / burst.z - state.view.y) * unit,
+      (THREAT_RADIUS / burst.z) * unit,
+      burst.age / BURST_TIME,
+    );
+  }
+  if (state.flash > 0) drawTracers(ctx, canopy, centreX, centreY);
+
   ctx.restore();
 
-  drawCrosshair(ctx, centreX, centreY, unit * 0.22);
+  drawCrosshair(ctx, centreX, centreY, unit, state.locked);
 }
 
-/** The `><` reticle from the mockups. FR-005 will later light it up when a threat sits inside. */
-function drawCrosshair(ctx: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
-  const gap = size * 0.45;
+/**
+ * The `><` reticle from the mockups, drawn to the very rectangle `isInReticle` tests against: the
+ * bracket tips mark its corners. FR-005 is the red state — the crosshair lights *before* the shot,
+ * which is the acceptance criterion US-01 puts first.
+ */
+function drawCrosshair(ctx: CanvasRenderingContext2D, cx: number, cy: number, unit: number, locked: boolean): void {
+  const outer = RETICLE.halfWidth * unit;
+  const height = RETICLE.halfHeight * unit;
+  const inner = outer - height;
+
+  ctx.save();
+  if (locked) {
+    ctx.strokeStyle = ALERT;
+    ctx.lineWidth *= 1.8;
+  }
   ctx.beginPath();
-  ctx.moveTo(cx - size - gap, cy - size);
-  ctx.lineTo(cx - gap, cy);
-  ctx.lineTo(cx - size - gap, cy + size);
-  ctx.moveTo(cx + size + gap, cy - size);
-  ctx.lineTo(cx + gap, cy);
-  ctx.lineTo(cx + size + gap, cy + size);
+  ctx.moveTo(cx - outer, cy - height);
+  ctx.lineTo(cx - inner, cy);
+  ctx.lineTo(cx - outer, cy + height);
+  ctx.moveTo(cx + outer, cy - height);
+  ctx.lineTo(cx + inner, cy);
+  ctx.lineTo(cx + outer, cy + height);
   ctx.stroke();
+  ctx.restore();
 }
+
+/** Wing span relative to the circle radius, measured off Entrop.jpg — the reference for this shape. */
+const WING_X = 2.73;
+const WING_Y = 1.48;
 
 function drawThreat(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
-  const wingX = r * 2.4;
-  const wingY = r * 1.9;
+  const wingX = r * WING_X;
+  const wingY = r * WING_Y;
 
+  // Just the X — no vertical edges closing off the wingtips, per the reference.
   ctx.beginPath();
   ctx.moveTo(cx - wingX, cy - wingY);
   ctx.lineTo(cx + wingX, cy + wingY);
   ctx.moveTo(cx - wingX, cy + wingY);
   ctx.lineTo(cx + wingX, cy - wingY);
-  ctx.moveTo(cx - wingX, cy - wingY);
-  ctx.lineTo(cx - wingX, cy + wingY);
-  ctx.moveTo(cx + wingX, cy - wingY);
-  ctx.lineTo(cx + wingX, cy + wingY);
   ctx.stroke();
 
   ctx.beginPath();
@@ -108,8 +138,42 @@ function drawThreat(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: nu
   ctx.stroke();
 }
 
-/** Placeholder chrome: the three instrument panels are outlined and labelled, but not yet live. */
-function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box): void {
+/** FR-008: a ring of shards thrown outwards, thinning as it goes. Flat outlines, no particles. */
+function drawBurst(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, progress: number): void {
+  const spokes = 8;
+  const reach = r * (2 + progress * 6);
+
+  ctx.save();
+  ctx.strokeStyle = ALERT;
+  ctx.globalAlpha = 1 - progress;
+  ctx.beginPath();
+  for (let i = 0; i < spokes; i += 1) {
+    const angle = (i / spokes) * Math.PI * 2;
+    ctx.moveTo(cx + Math.cos(angle) * reach * 0.45, cy + Math.sin(angle) * reach * 0.45);
+    ctx.lineTo(cx + Math.cos(angle) * reach, cy + Math.sin(angle) * reach);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * The cannon shot itself. Without it a miss is invisible — the round would just vanish from the
+ * counter, and US-01's "a shot that spends ammunition and destroys nothing" would read as a bug.
+ */
+function drawTracers(ctx: CanvasRenderingContext2D, canopy: Box, cx: number, cy: number): void {
+  ctx.save();
+  ctx.strokeStyle = ALERT;
+  ctx.beginPath();
+  ctx.moveTo(canopy.x, canopy.y + canopy.h);
+  ctx.lineTo(cx, cy);
+  ctx.moveTo(canopy.x + canopy.w, canopy.y + canopy.h);
+  ctx.lineTo(cx, cy);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** ARM and RADAR are live; the ENERGY / ENTROPY gauges are still an outlined placeholder. */
+function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box, state: GameState): void {
   const widths = [0.4, 0.22, 0.38];
   let x = strip.x;
 
@@ -122,8 +186,91 @@ function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box): void {
     const w = strip.w * widths[index];
     ctx.strokeRect(x, strip.y, w, strip.h);
     ctx.fillText(label, x + w / 2, strip.y + strip.h * 0.14);
+    const panel = { x, y: strip.y, w, h: strip.h };
+    if (label === "ARM") drawAmmo(ctx, panel, state.ammo);
+    if (label === "RADAR") drawRadar(ctx, panel, state.threat, state.view);
     x += w;
   }
+}
+
+/**
+ * FR-003: a coarse, approximate read of where to steer — deliberately not a faithful projection (a
+ * second exact copy of the canopy math would just be two displays to keep in sync for no gameplay
+ * gain). The bullseye at centre is not the ship, it is *wherever the crosshair currently points*: a
+ * blip sits on the bullseye exactly when the threat is centred in the reticle, and its angle is the
+ * same bearing the crosshair test uses, so panning the view (steering) visibly turns the blip around
+ * the dial. Blip size stands in for the distance-to-centre reading the PRD asks to keep — it grows as
+ * the threat closes, rather than sharing the dial's radius with direction and fighting it for meaning.
+ */
+function drawRadar(ctx: CanvasRenderingContext2D, panel: Box, threat: Threat | null, view: GameState["view"]): void {
+  const cx = panel.x + panel.w / 2;
+  const cy = panel.y + panel.h * 0.6;
+  const radius = Math.min(panel.w, panel.h * 0.75) * 0.36;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // The bullseye: where the crosshair is aimed right now, not the ship's position.
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.06, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (threat !== null) {
+    const bearingX = threat.x / threat.z - view.x;
+    const bearingY = threat.y / threat.z - view.y;
+    const angle = Math.atan2(bearingY, bearingX);
+    // PAN_LIMIT is the edge of what steering can ever reach, so it is the dial's own edge: a blip
+    // pinned to the rim means "keep turning," and it slides inward as the correction pays off.
+    const offTarget = clamp01(Math.hypot(bearingX, bearingY) / PAN_LIMIT);
+    const dist = radius * offTarget;
+
+    const approach = clamp01((threat.z - THREAT_PASS_Z) / (THREAT_SPAWN_Z - THREAT_PASS_Z));
+    const blipRadius = radius * (0.16 - approach * 0.1);
+
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(angle) * dist, cy + Math.sin(angle) * dist, blipRadius, 0, Math.PI * 2);
+    ctx.fillStyle = ALERT;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function clamp01(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
+}
+
+/**
+ * FR-009. Rounds are pips rather than digits: the PRD asks for a cockpit readable at a glance by
+ * someone watching over a shoulder, and a row that is visibly half empty says more at that distance
+ * than the number 8 does.
+ */
+function drawAmmo(ctx: CanvasRenderingContext2D, panel: Box, ammo: GameState["ammo"]): void {
+  const rows: { total: number; left: number }[] = [
+    { total: 16, left: ammo.cannon },
+    { total: 3, left: ammo.rocket },
+  ];
+  const pad = panel.w * 0.06;
+  const width = panel.w - pad * 2;
+
+  ctx.save();
+  ctx.lineWidth *= 0.7;
+  for (const [row, { total, left }] of rows.entries()) {
+    const y = panel.y + panel.h * (0.52 + row * 0.24);
+    const step = width / total;
+    const pipWidth = step * 0.62;
+    const pipHeight = panel.h * 0.14;
+    for (let i = 0; i < total; i += 1) {
+      const px = panel.x + pad + i * step;
+      ctx.beginPath();
+      ctx.rect(px, y, pipWidth, pipHeight);
+      ctx.fillStyle = INK;
+      if (i < left) ctx.fill();
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 /** The PRD asks for a steady 60 fps; without a readout that requirement is unfalsifiable while developing. */
