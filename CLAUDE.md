@@ -1,0 +1,135 @@
+# CLAUDE.md zasady kardynalne
+
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+# Project: Entropy Attacks
+
+A browser fighter-cockpit game shown at a conference booth. Product requirements live in
+`context/foundation/prd.md`; the stack decision and its rationale live in
+`context/foundation/tech-stack.md`. Read the PRD before implementing gameplay — the acceptance
+criteria there are specific and several of them are non-obvious.
+
+## Commands
+
+- `npm run dev` — dev server (Cloudflare workerd runtime)
+- `npm run build` — production build
+- `npm run preview` — preview the production build
+- `npm run lint` / `npm run lint:fix` — ESLint with type-checked rules
+- `npm run format` — Prettier (with prettier-plugin-astro + prettier-plugin-tailwindcss)
+
+Pre-commit: husky + lint-staged runs `eslint --fix` on `*.{ts,tsx,astro}` and `prettier --write`
+on `*.{json,css,md}`.
+
+## Architecture
+
+Astro 6 with React 19 islands, Tailwind 4, and shadcn/ui. `output: "server"` with the
+`@astrojs/cloudflare` adapter; deploys to Cloudflare Pages.
+
+This project was scaffolded from `10x-astro-starter` and then **stripped of its entire
+authentication and Supabase layer** — sign-in and sign-up pages, the auth API routes, the session
+middleware, the Supabase client, and the `supabase/` config directory are all gone, deliberately.
+See "Product constraints" below before reinstating any of it.
+
+### Conventions
+
+- **Path alias**: `@/*` maps to `./src/*`.
+- **Astro components** for static content and layout; **React components** only where
+  interactivity is actually needed.
+- **Tailwind class merging**: use the `cn()` helper from `@/lib/utils` (clsx + tailwind-merge).
+  Do not concatenate class strings by hand.
+- **shadcn/ui**: components live in `src/components/ui/`, "new-york" variant. Add new ones with
+  `npx shadcn@latest add [name]`.
+- **React**: no Next.js directives ("use client" and friends). Extract hooks to
+  `src/components/hooks/`.
+- **Services and helpers** go in `src/lib/`; shared types go in `src/types.ts`.
+- **Line endings are LF**, enforced by `.gitattributes`. Do not reintroduce CRLF — Prettier
+  rejects it and the pre-commit hook will fail.
+
+### Environment
+
+- Node.js 22 (see `.nvmrc`).
+- The project needs **no environment variables**. If a task seems to require one, that is a signal
+  the task conflicts with the product constraints below.
+- Deploy: `npx wrangler deploy`. CI (`.github/workflows/ci.yml`) runs lint + build on `master`.
+
+## Product constraints
+
+These come from the PRD and are binding. They are the constraints most likely to be violated by
+accident, because the obvious implementation of a "high score table" or a "player profile" breaks
+them.
+
+- **No accounts, no sign-in, no server-side player data.** The player types a self-chosen nick; it
+  is used only for a local table of best runs.
+- **Nothing the player types or scores may leave their machine.** The nick and the score table
+  belong in browser local storage. Do not add a database, an auth provider, an analytics call, or
+  an API route that receives player data. If a feature seems to need one, stop and ask.
+- **The game must hold 60 fps** for a whole run on an ordinary work laptop, and the ship must begin
+  responding to a key press **within 50 ms**. These are hard numbers from the PRD, not aspirations.
+- **Controls are the numeric keypad**: 8 up, 2 down, 4 left, 6 right. A keyboard is required.
+- **Scope is deliberately narrow.** One enemy type. No tutorial, no instructions screen, no saving
+  or resuming a run, no translations, no global scoreboard. The PRD's `## Non-Goals` section lists
+  these as considered and rejected — do not reintroduce them as "nice touches".

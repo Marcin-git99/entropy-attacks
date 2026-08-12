@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(10x-prd)",
+      "Skill(10x-prd:*)",
+      "PowerShell(Set-Clipboard \"/10x-tech-stack-selector\")",
+      "PowerShell(\"copied\")"
+    ]
+  }
+}
