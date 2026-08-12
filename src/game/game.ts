@@ -19,8 +19,9 @@ const PAN_LIMIT = 1.4;
  * and releasing it stops the view dead. It satisfies the PRD's 50 ms response budget trivially,
  * at the cost of feeling weightless — there is no sense of a heavy fighter being hauled around.
  *
- * The alternative is an acceleration model with inertia, which reads as mass but spends part of the
- * response budget ramping up. That is a game-feel decision, not a technical one.
+ * The alternative — an acceleration model with inertia — was considered and rejected: it reads as
+ * mass, but spends part of the response budget ramping up. This is a settled game-feel decision;
+ * do not switch models without asking.
  */
 export function applySteering(view: GameState["view"], input: SteerInput, dt: number): void {
   const dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
