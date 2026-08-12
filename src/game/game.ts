@@ -28,6 +28,12 @@ export interface GameState {
   threat: Threat | null;
   burst: Burst | null;
   ammo: { cannon: number; rocket: number };
+  /**
+   * FR-010/FR-013, 0-100. Rises only, never resets mid-run — "the defence can only slow the
+   * collapse, never undo it." Energy (FR-011) is the mirror the PRD asks for; it is not stored
+   * separately, `render.ts` reads it as `100 - entropy` so the two readings can never drift apart.
+   */
+  entropy: number;
   /** FR-005: whether the threat sits inside the crosshair right now. Recomputed every frame. */
   locked: boolean;
   /** Seconds left on the cannon tracer, so a miss is visible and not just a number going down. */
@@ -37,8 +43,17 @@ export interface GameState {
 
 /** Canopy half-heights per second. Tuned by eye; the PRD leaves the balance open. */
 const PAN_SPEED = 0.9;
-/** How far off dead ahead the ship can look before the canopy frame stops it. Exported: it is the radar's dial edge too — past this, no amount of steering reaches the target. */
-export const PAN_LIMIT = 1.4;
+/**
+ * How far off dead ahead the ship can look before the canopy frame stops it, in canopy half-heights.
+ *
+ * Must stay under 1 — a bearing of exactly 1 is already the canopy's own top/bottom edge (`unit` in
+ * render.ts is defined as half the canopy height, so that is a fixed property of the projection, not
+ * a tuning number). Panning past that would let the crosshair aim somewhere the canopy can never draw,
+ * which silently breaks something worse than "hard to hit": a *different* threat sitting near dead
+ * ahead can scroll off the far edge and disappear while the view is pinned at the limit chasing
+ * something else, with no way to tell it was ever there. 0.85 leaves comfortable margin.
+ */
+const PAN_LIMIT = 0.85;
 
 /**
  * Maps held keys to view movement. This is the direct model: a key press moves the view this frame,
@@ -94,6 +109,19 @@ const ROCKET_ROUNDS = 3;
 export const BURST_TIME = 0.6;
 /** How long the cannon tracer is drawn. Short enough to read as a shot, not a beam. */
 const FLASH_TIME = 0.08;
+
+/**
+ * Business Logic: "ten threats reaching the centre end the run in defeat" — 100 / 10 = 10 infections.
+ * Exported so `render.ts` can read the same ceiling for the entropy/energy gauges and the crack pattern.
+ */
+export const MAX_ENTROPY = 100;
+/** FR-010/US-02: "entropy rises by 10%" per infection, flat regardless of how it was missed. */
+const INFECTION_ENTROPY = 10;
+
+/** FR-013: the run is lost once entropy has nowhere further to go. */
+export function isDefeated(state: GameState): boolean {
+  return state.entropy >= MAX_ENTROPY;
+}
 
 /**
  * FR-004, and the geometry behind the PRD's cost-of-delay rule.
@@ -174,6 +202,7 @@ export function start(canvas: HTMLCanvasElement): void {
     threat: { x: 0.8, y: -0.5, z: THREAT_SPAWN_Z },
     burst: null,
     ammo: { cannon: CANNON_ROUNDS, rocket: ROCKET_ROUNDS },
+    entropy: 0,
     locked: false,
     flash: 0,
     fps: 0,
@@ -198,7 +227,7 @@ export function start(canvas: HTMLCanvasElement): void {
     previous = now;
 
     applySteering(state.view, controls.steer, dt);
-    fireArmedWeapons(state, controls);
+    if (!isDefeated(state)) fireArmedWeapons(state, controls);
     advance(state, dt);
 
     framesSinceSample += 1;
@@ -235,6 +264,8 @@ function fireArmedWeapons(state: GameState, controls: Controls): void {
 function advance(state: GameState, dt: number): void {
   state.flash = Math.max(0, state.flash - dt);
 
+  if (isDefeated(state)) return; // FR-013/019: the canopy has shattered — the run stops here.
+
   if (state.burst !== null) {
     state.burst.age += dt;
     if (state.burst.age >= BURST_TIME) {
@@ -246,6 +277,12 @@ function advance(state: GameState, dt: number): void {
 
   if (state.threat === null) return;
   advanceThreat(state.threat, dt);
-  if (hasPassed(state.threat)) state.threat = spawnThreat();
+  if (hasPassed(state.threat)) {
+    // US-02: an unstopped threat costs entropy, not a life — the run continues unless this was the last straw.
+    state.entropy = Math.min(MAX_ENTROPY, state.entropy + INFECTION_ENTROPY);
+    state.threat = isDefeated(state) ? null : spawnThreat();
+    state.locked = false;
+    return;
+  }
   state.locked = isInReticle(state.threat, state.view);
 }

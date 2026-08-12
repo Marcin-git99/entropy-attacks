@@ -1,10 +1,12 @@
-import { BURST_TIME, PAN_LIMIT, RETICLE, THREAT_PASS_Z, THREAT_SPAWN_Z, type GameState, type Threat } from "./game";
+import { BURST_TIME, MAX_ENTROPY, RETICLE, THREAT_PASS_Z, THREAT_SPAWN_Z, type GameState, type Threat } from "./game";
 
 /** Flat black-outline style, per the PRD non-goal that rules out photorealistic art. */
 const INK = "#000";
 const PAPER = "#fff";
-/** The cockpit's single accent. Red carries meaning everywhere in this game: a lit crosshair, and later the radar and the cracks. */
+/** Red carries meaning everywhere: a lit crosshair, the radar blip, the entropy fill, the cracks. */
 const ALERT = "#d40000";
+/** The one cool colour in the cockpit, reserved for the energy fill — per the reference mockup. */
+const ENERGY_COLOR = "#1e9be0";
 
 /** Canopy occupies the top of the frame; the instrument strip takes the rest. Proportions follow the mockups. */
 const CANOPY_HEIGHT = 0.72;
@@ -87,6 +89,68 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
   ctx.restore();
 
   drawCrosshair(ctx, centreX, centreY, unit, state.locked);
+  drawCracks(ctx, canopy, state.entropy);
+}
+
+/**
+ * FR-019. Cracks are cosmetic damage on the glass itself, so they draw over everything else in the
+ * canopy — threat, crosshair, tracers — the same way a real crack would sit between the pilot and
+ * the view. Nothing appears below half entropy, matching "past half entropy, each further infection
+ * leaves the canopy visibly more cracked than the last"; at MAX_ENTROPY every crack is at full reach,
+ * standing in for "the canopy shatters."
+ *
+ * Shapes are regenerated every frame from a seed per crack index rather than stored in GameState —
+ * cheap, and a pseudo-random hash of a fixed integer is exactly as stable across frames as a stored
+ * value would be, without game.ts having to own crack geometry it has no other use for.
+ */
+const CRACK_COUNT = 7;
+
+function drawCracks(ctx: CanvasRenderingContext2D, canopy: Box, entropy: number): void {
+  const progress = clamp01((entropy - MAX_ENTROPY / 2) / (MAX_ENTROPY / 2));
+  if (progress <= 0) return;
+
+  const active = Math.ceil(progress * CRACK_COUNT);
+  const cx = canopy.x + canopy.w / 2;
+  const cy = canopy.y + canopy.h / 2;
+  const reach = Math.max(canopy.w, canopy.h) * 0.6;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
+  ctx.clip();
+  for (let i = 0; i < active; i += 1) drawCrack(ctx, cx, cy, reach, progress, i);
+  ctx.restore();
+}
+
+function drawCrack(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  reach: number,
+  progress: number,
+  seed: number,
+): void {
+  const angle = pseudoRandom(seed * 7 + 1) * Math.PI * 2;
+  const perp = angle + Math.PI / 2;
+  const segments = 5;
+
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  for (let s = 1; s <= segments; s += 1) {
+    const t = (s / segments) * progress;
+    const jitter = (pseudoRandom(seed * 13 + s * 3) - 0.5) * reach * 0.16;
+    ctx.lineTo(
+      cx + Math.cos(angle) * reach * t + Math.cos(perp) * jitter,
+      cy + Math.sin(angle) * reach * t + Math.sin(perp) * jitter,
+    );
+  }
+  ctx.stroke();
+}
+
+/** A stable, non-cryptographic hash from an integer seed to [0, 1) — shader-style, cheap, deterministic. */
+function pseudoRandom(seed: number): number {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
 }
 
 /**
@@ -172,7 +236,7 @@ function drawTracers(ctx: CanvasRenderingContext2D, canopy: Box, cx: number, cy:
   ctx.restore();
 }
 
-/** ARM and RADAR are live; the ENERGY / ENTROPY gauges are still an outlined placeholder. */
+/** All three panels are live. */
 function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box, state: GameState): void {
   const widths = [0.4, 0.22, 0.38];
   let x = strip.x;
@@ -185,22 +249,95 @@ function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box, state: G
   for (const [index, label] of ["ARM", "RADAR", "ENERGY / ENTROPY"].entries()) {
     const w = strip.w * widths[index];
     ctx.strokeRect(x, strip.y, w, strip.h);
-    ctx.fillText(label, x + w / 2, strip.y + strip.h * 0.14);
     const panel = { x, y: strip.y, w, h: strip.h };
-    if (label === "ARM") drawAmmo(ctx, panel, state.ammo);
-    if (label === "RADAR") drawRadar(ctx, panel, state.threat, state.view);
+    if (label === "ARM") {
+      ctx.fillText(label, x + w / 2, strip.y + strip.h * 0.14);
+      drawAmmo(ctx, panel, state.ammo);
+    }
+    if (label === "RADAR") {
+      ctx.fillText(label, x + w / 2, strip.y + strip.h * 0.14);
+      drawRadar(ctx, panel, state.threat, state.view);
+    }
+    // ENERGY / ENTROPY draws its own two column labels instead of one shared header — see drawEnergyEntropy.
+    if (label === "ENERGY / ENTROPY") drawEnergyEntropy(ctx, panel, state.entropy);
     x += w;
   }
 }
 
 /**
+ * FR-010/FR-011, drawn as two vertical thermometers per the reference mockup — each its own labelled
+ * column with a tick bracket, not the horizontal bars this started as. Energy empties in blue; entropy
+ * fills in the alert colour, so together they read as one mirrored gauge rather than two unrelated
+ * numbers — the "second, faster peripheral read of the same state" the PRD asks for, not new information.
+ */
+function drawEnergyEntropy(ctx: CanvasRenderingContext2D, panel: Box, entropy: number): void {
+  const energy = MAX_ENTROPY - entropy;
+  // Padding on both outer edges too, so a right-aligned "100%" tick label never lands on a panel border.
+  const pad = panel.w * 0.05;
+  const gap = panel.w * 0.06;
+  const colW = (panel.w - pad * 2 - gap) / 2;
+
+  drawVerticalGauge(ctx, panel.x + pad, panel.y, colW, panel.h, energy / MAX_ENTROPY, ENERGY_COLOR, "ENERGY");
+  drawVerticalGauge(ctx, panel.x + pad + colW + gap, panel.y, colW, panel.h, entropy / MAX_ENTROPY, ALERT, "ENTROPY");
+}
+
+function drawVerticalGauge(
+  ctx: CanvasRenderingContext2D,
+  colX: number,
+  colY: number,
+  colW: number,
+  colH: number,
+  fraction: number,
+  fill: string,
+  label: string,
+): void {
+  const barTop = colY + colH * 0.4;
+  const barH = colH * 0.48;
+  const barW = colW * 0.45;
+  const barX = colX + colW * 0.44;
+  const tickX = barX - colW * 0.1;
+
+  ctx.save();
+
+  ctx.font = `${Math.round(colH * 0.12)}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = INK;
+  ctx.fillText(label, colX + colW / 2, colY + colH * 0.24);
+
+  // The tick bracket: a spine with three ticks, read top to bottom as 100 / 50 / 0.
+  ctx.font = `${Math.round(colH * 0.09)}px system-ui, sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.beginPath();
+  ctx.moveTo(tickX, barTop);
+  ctx.lineTo(tickX, barTop + barH);
+  for (const step of [0, 0.5, 1]) {
+    const ty = barTop + barH * (1 - step);
+    ctx.moveTo(tickX, ty);
+    ctx.lineTo(tickX - colW * 0.06, ty);
+  }
+  ctx.stroke();
+  for (const step of [0, 0.5, 1]) {
+    ctx.fillText(`${Math.round(step * 100)}%`, tickX - colW * 0.09, barTop + barH * (1 - step));
+  }
+
+  // The bar itself, filled from the bottom up — 0% is an empty outline, 100% is solid.
+  ctx.strokeRect(barX, barTop, barW, barH);
+  ctx.fillStyle = fill;
+  const fillH = barH * clamp01(fraction);
+  ctx.fillRect(barX, barTop + barH - fillH, barW, fillH);
+
+  ctx.restore();
+}
+
+/**
  * FR-003: a coarse, approximate read of where to steer — deliberately not a faithful projection (a
  * second exact copy of the canopy math would just be two displays to keep in sync for no gameplay
- * gain). The bullseye at centre is not the ship, it is *wherever the crosshair currently points*: a
- * blip sits on the bullseye exactly when the threat is centred in the reticle, and its angle is the
- * same bearing the crosshair test uses, so panning the view (steering) visibly turns the blip around
- * the dial. Blip size stands in for the distance-to-centre reading the PRD asks to keep — it grows as
- * the threat closes, rather than sharing the dial's radius with direction and fighting it for meaning.
+ * gain). Flat 2D space: a threat spawns on the rim (THREAT_SPAWN_Z) and crawls straight in toward the
+ * centre (THREAT_PASS_Z, the ship's own plane) as it closes, the classic radar reading. Angle is the
+ * bearing relative to wherever the crosshair currently points, not the threat's fixed world direction,
+ * so panning the view (steering) visibly turns the blip around the dial rather than leaving it inert.
  */
 function drawRadar(ctx: CanvasRenderingContext2D, panel: Box, threat: Threat | null, view: GameState["view"]): void {
   const cx = panel.x + panel.w / 2;
@@ -212,7 +349,7 @@ function drawRadar(ctx: CanvasRenderingContext2D, panel: Box, threat: Threat | n
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.stroke();
 
-  // The bullseye: where the crosshair is aimed right now, not the ship's position.
+  // The ship, at the centre of its own radar.
   ctx.beginPath();
   ctx.arc(cx, cy, radius * 0.06, 0, Math.PI * 2);
   ctx.stroke();
@@ -221,16 +358,12 @@ function drawRadar(ctx: CanvasRenderingContext2D, panel: Box, threat: Threat | n
     const bearingX = threat.x / threat.z - view.x;
     const bearingY = threat.y / threat.z - view.y;
     const angle = Math.atan2(bearingY, bearingX);
-    // PAN_LIMIT is the edge of what steering can ever reach, so it is the dial's own edge: a blip
-    // pinned to the rim means "keep turning," and it slides inward as the correction pays off.
-    const offTarget = clamp01(Math.hypot(bearingX, bearingY) / PAN_LIMIT);
-    const dist = radius * offTarget;
 
     const approach = clamp01((threat.z - THREAT_PASS_Z) / (THREAT_SPAWN_Z - THREAT_PASS_Z));
-    const blipRadius = radius * (0.16 - approach * 0.1);
+    const dist = radius * approach; // 1 (rim) at spawn, 0 (centre) at the pass plane
 
     ctx.beginPath();
-    ctx.arc(cx + Math.cos(angle) * dist, cy + Math.sin(angle) * dist, blipRadius, 0, Math.PI * 2);
+    ctx.arc(cx + Math.cos(angle) * dist, cy + Math.sin(angle) * dist, radius * 0.09, 0, Math.PI * 2);
     ctx.fillStyle = ALERT;
     ctx.fill();
   }
