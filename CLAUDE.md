@@ -129,7 +129,9 @@ them.
   an API route that receives player data. If a feature seems to need one, stop and ask.
 - **The game must hold 60 fps** for a whole run on an ordinary work laptop, and the ship must begin
   responding to a key press **within 50 ms**. These are hard numbers from the PRD, not aspirations.
-- **Controls are the numeric keypad**: 8 up, 2 down, 4 left, 6 right. A keyboard is required.
+- **Controls are the numeric keypad**: 8 up, 5 down, 4 left, 6 right. A keyboard is required.
+  Down is 5, not 2 — the four keys form an inverted T. The PRD was revised to match; do not
+  "correct" it back.
 - **Scope is deliberately narrow.** One enemy type. No tutorial, no instructions screen, no saving
   or resuming a run, no translations, no global scoreboard. The PRD's `## Non-Goals` section lists
   these as considered and rejected — do not reintroduce them as "nice touches".
