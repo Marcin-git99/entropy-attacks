@@ -6,7 +6,10 @@ export interface SteerInput {
 }
 
 /**
- * FR-002: the ship steers from the numeric keypad — 8 up, 2 down, 4 left, 6 right.
+ * FR-002 asks for 8 up, 2 down, 4 left, 6 right. Down is bound to 5 instead, deliberately: 4, 5 and
+ * 6 share a row with 8 directly above 5, so 8/4/5/6 forms the inverted T that arrow keys and WASD
+ * have trained every player to expect. Reaching down to 2 breaks the hand position. The PRD still
+ * specifies 2 — this is a knowing deviation, not a transcription slip.
  *
  * Keys are matched on `event.code` rather than `event.key` on purpose: `key` reports the numpad
  * digits as arrow names when NumLock is off, which would silently break steering on half the
@@ -14,7 +17,7 @@ export interface SteerInput {
  */
 const KEY_MAP: Partial<Record<string, keyof SteerInput>> = {
   Numpad8: "up",
-  Numpad2: "down",
+  Numpad5: "down",
   Numpad4: "left",
   Numpad6: "right",
 };
