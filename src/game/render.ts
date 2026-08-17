@@ -1,4 +1,13 @@
-import { BURST_TIME, MAX_ENTROPY, RETICLE, THREAT_PASS_Z, THREAT_SPAWN_Z, type GameState, type Threat } from "./game";
+import {
+  BURST_TIME,
+  isVisible,
+  MAX_ENTROPY,
+  RETICLE,
+  THREAT_PASS_Z,
+  THREAT_SPAWN_Z,
+  type GameState,
+  type Threat,
+} from "./game";
 
 /** Flat black-outline style, per the PRD non-goal that rules out photorealistic art. */
 const INK = "#000";
@@ -39,6 +48,35 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height
   drawCanopy(ctx, canopy, state);
   drawInstrumentStrip(ctx, strip, state);
   drawFrameRate(ctx, canopy, state.fps);
+  if (state.phase !== "playing") drawOverlay(ctx, canopy, state.phase);
+}
+
+/** FR-001/FR-012/FR-013/FR-014: the title/won/lost resting screens, all sharing one layout. */
+const OVERLAY_TEXT: Record<Exclude<GameState["phase"], "playing">, { title: string; prompt: string }> = {
+  title: { title: "ENTROPY ATTACKS", prompt: "PRESS SPACE TO LAUNCH" },
+  won: { title: "WAVE CLEARED", prompt: "PRESS SPACE TO FLY AGAIN" },
+  lost: { title: "CANOPY BREACHED", prompt: "PRESS SPACE TO FLY AGAIN" },
+};
+
+function drawOverlay(ctx: CanvasRenderingContext2D, canopy: Box, phase: Exclude<GameState["phase"], "playing">): void {
+  const { title, prompt } = OVERLAY_TEXT[phase];
+  const cx = canopy.x + canopy.w / 2;
+  const cy = canopy.y + canopy.h / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.fill();
+
+  ctx.fillStyle = INK;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `bold ${Math.round(canopy.h * 0.11)}px system-ui, sans-serif`;
+  ctx.fillText(title, cx, cy - canopy.h * 0.06);
+  ctx.font = `${Math.round(canopy.h * 0.05)}px system-ui, sans-serif`;
+  ctx.fillText(prompt, cx, cy + canopy.h * 0.08);
+  ctx.restore();
 }
 
 interface Box {
@@ -67,7 +105,8 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
   // Perspective divide: a threat's bearing is its lateral offset over its distance, so both its
   // position and its size fall out of z. Nothing here fakes the approach — it is the projection.
   const { threat, burst } = state;
-  if (threat !== null) {
+  // FR-003: outside the boresight cone the threat is radar-only — steer towards it to bring it into view.
+  if (threat !== null && isVisible(threat, state.view)) {
     drawThreat(
       ctx,
       centreX + (threat.x / threat.z - state.view.x) * unit,

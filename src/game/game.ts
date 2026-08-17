@@ -21,7 +21,15 @@ export interface Burst {
   age: number;
 }
 
+/**
+ * FR-001/FR-012/FR-013/FR-014: the run's lifecycle. "title" is the pre-launch and post-run resting
+ * state's opposite number — "won"/"lost" are what a finished run settles into, and the same
+ * fire key that starts the first run from "title" starts the next one from either of those.
+ */
+export type Phase = "title" | "playing" | "won" | "lost";
+
 export interface GameState {
+  phase: Phase;
   /** How far the view has panned from dead ahead, in canopy half-heights. */
   view: { x: number; y: number };
   /** Null while a burst is playing — the threat is gone and the next one has not entered yet. */
@@ -34,6 +42,11 @@ export interface GameState {
    * separately, `render.ts` reads it as `100 - entropy` so the two readings can never drift apart.
    */
   entropy: number;
+  /**
+   * FR-012: how many of the wave's threats have been settled — destroyed or passed, either counts.
+   * The wave clears (a win) once this reaches WAVE_SIZE without the run having been lost first.
+   */
+  resolved: number;
   /** FR-005: whether the threat sits inside the crosshair right now. Recomputed every frame. */
   locked: boolean;
   /** Seconds left on the cannon tracer, so a miss is visible and not just a number going down. */
@@ -41,8 +54,14 @@ export interface GameState {
   fps: number;
 }
 
-/** Canopy half-heights per second. Tuned by eye; the PRD leaves the balance open. */
-const PAN_SPEED = 0.9;
+/**
+ * Canopy half-heights per second. Bearing grows as offset/z, so a wide-entry threat's bearing
+ * outruns a slow pan: at 0.9 (the original tuning), anything spawning past bearing ~0.8 was already
+ * unreachable by the crosshair even for a player who reacted instantly, because the closing threat's
+ * bearing grows faster than the view could catch up. Raised to close most of that gap — the widest
+ * entries still need a rocket, not a faster pan, but the common case should be catchable by steering.
+ */
+const PAN_SPEED = 1.6;
 /**
  * How far off dead ahead the ship can look before the canopy frame stops it, in canopy half-heights.
  *
@@ -82,17 +101,46 @@ export const THREAT_SPAWN_Z = 10;
 /** The ship's plane. Below this the threat has passed — US-02's "reaches the centre". Also the radar's centre. */
 export const THREAT_PASS_Z = 0.4;
 /**
- * How far off the flight path a threat can be and still be worth aiming at, in world units. Direction
- * (atan2 of x, y) is fixed for the whole flight, so this is what decides how far from dead-ahead a
- * threat can enter — the reason FR-003's radar exists is to give the player a heads-up before a wide
- * entry like this is anywhere near canopy-visible.
+ * How far left/right of the flight path a threat can be and still be worth aiming at, in world
+ * units. Direction (atan2 of x, y) is fixed for the whole flight, so this is what decides how far
+ * from dead-ahead a threat can enter.
  *
- * Bounded so a threat is still inside the *canopy* (not the crosshair) at spawn — bearing = offset /
- * THREAT_SPAWN_Z must clear the canopy's vertical half-extent (~1) with margin, or it would swing past
- * without ever being on screen at all. Steering (±PAN_LIMIT) is what then has to close the rest of the
- * gap down to the crosshair; that's the "go find it" FR-003 is asking for, not a static wait.
+ * Set past CANOPY_FOV * THREAT_SPAWN_Z so a wide entry's bearing at spawn clears the boresight cone —
+ * it exists only on the radar until the pilot steers it into view, which is the "before they are
+ * visible through the canopy" FR-003 asks for. Still inside CANOPY_FOV*THREAT_SPAWN_Z + PAN_LIMIT, so
+ * full steering always closes the gap: nothing spawns unreachable.
  */
-const THREAT_SPREAD = 6;
+const THREAT_SPREAD_X = 11;
+/**
+ * How far above/below the flight path a threat can be, in world units — much tighter than the
+ * horizontal spread on purpose. Threats fly in roughly level with the ship, banking left and right
+ * to attack rather than diving from high above or climbing from below; the small wobble is texture,
+ * not a second axis of "wide entry". Kept well under CANOPY_FOV * THREAT_SPAWN_Z so a threat is never
+ * hidden by altitude alone the way it can be hidden by bearing off to one side.
+ */
+const THREAT_SPREAD_Y = 4;
+
+/**
+ * FR-003/FR-004: the boresight cone the canopy actually shows, in bearing units — fixed regardless of
+ * the canopy's on-screen aspect ratio. Without this, a wide monitor's canopy is wide enough in
+ * bearing-space that a threat entering from the side is inside it the instant it spawns, and the
+ * radar would never actually be "before" the canopy for anyone playing on a landscape screen.
+ * Matches the vertical half-extent the canopy geometry already enforces for free (`unit` in
+ * render.ts), so the cone reads the same on every screen rather than only being reliable vertically.
+ */
+export const CANOPY_FOV = 1.0;
+
+/**
+ * FR-003/FR-004: whether the threat's bearing currently falls inside the boresight cone at all — the
+ * canopy only draws it when this is true. Distinct from `isInReticle`, the much smaller aiming window
+ * that sits inside this cone; a threat can be canopy-visible for a while before it is also lined up
+ * to shoot.
+ */
+export function isVisible(threat: Threat, view: GameState["view"]): boolean {
+  const bearingX = threat.x / threat.z - view.x;
+  const bearingY = threat.y / threat.z - view.y;
+  return Math.abs(bearingX) <= CANOPY_FOV && Math.abs(bearingY) <= CANOPY_FOV;
+}
 
 /**
  * The crosshair window, measured from the centre of the view in canopy half-heights. Game logic owns
@@ -117,6 +165,9 @@ const FLASH_TIME = 0.08;
 export const MAX_ENTROPY = 100;
 /** FR-010/US-02: "entropy rises by 10%" per infection, flat regardless of how it was missed. */
 const INFECTION_ENTROPY = 10;
+
+/** FR-012: the wave size — top of the PRD's 12-15 range, tuned by the user. */
+export const WAVE_SIZE = 15;
 
 /** FR-013: the run is lost once entropy has nowhere further to go. */
 export function isDefeated(state: GameState): boolean {
@@ -147,8 +198,8 @@ export function hasPassed(threat: Threat): boolean {
 /** Placeholder until FR-012 brings a real wave: one threat at a time, so the approach is repeatable. */
 function spawnThreat(): Threat {
   return {
-    x: (Math.random() * 2 - 1) * THREAT_SPREAD,
-    y: (Math.random() * 2 - 1) * THREAT_SPREAD,
+    x: (Math.random() * 2 - 1) * THREAT_SPREAD_X,
+    y: (Math.random() * 2 - 1) * THREAT_SPREAD_Y,
     z: THREAT_SPAWN_Z,
   };
 }
@@ -190,6 +241,20 @@ function destroy(state: GameState, threat: Threat): void {
   state.burst = { x: threat.x, y: threat.y, z: threat.z, age: 0 };
   state.threat = null;
   state.locked = false;
+  state.resolved += 1;
+}
+
+/** FR-001/FR-014: (re)starts a run — the same call whether this is the first launch or a replay. */
+function startRun(state: GameState): void {
+  state.phase = "playing";
+  state.view = { x: 0, y: 0 };
+  state.threat = spawnThreat();
+  state.burst = null;
+  state.ammo = { cannon: CANNON_ROUNDS, rocket: ROCKET_ROUNDS };
+  state.entropy = 0;
+  state.resolved = 0;
+  state.locked = false;
+  state.flash = 0;
 }
 
 export function start(canvas: HTMLCanvasElement): void {
@@ -198,11 +263,13 @@ export function start(canvas: HTMLCanvasElement): void {
 
   const controls = createInput(window);
   const state: GameState = {
+    phase: "title",
     view: { x: 0, y: 0 },
-    threat: { x: 0.8, y: -0.5, z: THREAT_SPAWN_Z },
+    threat: null,
     burst: null,
     ammo: { cannon: CANNON_ROUNDS, rocket: ROCKET_ROUNDS },
     entropy: 0,
+    resolved: 0,
     locked: false,
     flash: 0,
     fps: 0,
@@ -226,9 +293,16 @@ export function start(canvas: HTMLCanvasElement): void {
     const dt = Math.min((now - previous) / 1000, 0.1);
     previous = now;
 
-    applySteering(state.view, controls.steer, dt);
-    if (!isDefeated(state)) fireArmedWeapons(state, controls);
-    advance(state, dt);
+    if (state.phase === "playing") {
+      applySteering(state.view, controls.steer, dt);
+      fireArmedWeapons(state, controls);
+      advance(state, dt);
+    } else if (controls.armed.cannon) {
+      // FR-001/FR-014: the fire key doubles as launch/replay — one key to learn, not two.
+      controls.armed.cannon = false;
+      controls.armed.rocket = false;
+      startRun(state);
+    }
 
     framesSinceSample += 1;
     secondsSinceSample += dt;
@@ -264,13 +338,15 @@ function fireArmedWeapons(state: GameState, controls: Controls): void {
 function advance(state: GameState, dt: number): void {
   state.flash = Math.max(0, state.flash - dt);
 
-  if (isDefeated(state)) return; // FR-013/019: the canopy has shattered — the run stops here.
-
   if (state.burst !== null) {
     state.burst.age += dt;
     if (state.burst.age >= BURST_TIME) {
       state.burst = null;
-      state.threat = spawnThreat();
+      if (state.resolved >= WAVE_SIZE) {
+        state.phase = "won"; // FR-012: the wave is clear, and the last kill's burst has played out.
+      } else {
+        state.threat = spawnThreat();
+      }
     }
     return;
   }
@@ -280,8 +356,16 @@ function advance(state: GameState, dt: number): void {
   if (hasPassed(state.threat)) {
     // US-02: an unstopped threat costs entropy, not a life — the run continues unless this was the last straw.
     state.entropy = Math.min(MAX_ENTROPY, state.entropy + INFECTION_ENTROPY);
-    state.threat = isDefeated(state) ? null : spawnThreat();
+    state.resolved += 1;
+    state.threat = null;
     state.locked = false;
+    if (isDefeated(state)) {
+      state.phase = "lost"; // FR-013: the canopy has shattered.
+    } else if (state.resolved >= WAVE_SIZE) {
+      state.phase = "won"; // FR-012: the wave is clear.
+    } else {
+      state.threat = spawnThreat();
+    }
     return;
   }
   state.locked = isInReticle(state.threat, state.view);
