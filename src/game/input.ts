@@ -13,6 +13,11 @@ export interface Controls {
    * point of an ammunition budget the player has to ration.
    */
   armed: { cannon: boolean; rocket: boolean };
+  /**
+   * Level 2's a/b/c answer picks — edge-triggered for the same reason weapons are: one key-down is
+   * one submitted answer, not a stream of them while the key is held.
+   */
+  answer: { a: boolean; b: boolean; c: boolean };
 }
 
 /**
@@ -42,17 +47,32 @@ const WEAPON_MAP: Partial<Record<string, keyof Controls["armed"]>> = {
   Numpad0: "rocket",
 };
 
+/**
+ * Level 2 reuses the same physical row instead of teaching a new layout: 4/5/6 already read as
+ * left/centre/right from steering, which maps directly onto three answers laid out left to right.
+ * Steering itself is inert in the repair scene (nothing to fly), so the keys are free to mean
+ * something else there.
+ */
+const ANSWER_MAP: Partial<Record<string, keyof Controls["answer"]>> = {
+  Numpad4: "a",
+  Numpad5: "b",
+  Numpad6: "c",
+};
+
 export function createInput(target: Window): Controls {
   const controls: Controls = {
     steer: { up: false, down: false, left: false, right: false },
     armed: { cannon: false, rocket: false },
+    answer: { a: false, b: false, c: false },
   };
 
   target.addEventListener("keydown", (event) => {
     const direction = KEY_MAP[event.code];
-    if (direction !== undefined) {
+    const answer = ANSWER_MAP[event.code];
+    if (direction !== undefined || answer !== undefined) {
       event.preventDefault();
-      controls.steer[direction] = true;
+      if (direction !== undefined) controls.steer[direction] = true;
+      if (answer !== undefined && !event.repeat) controls.answer[answer] = true;
       return;
     }
     const weapon = WEAPON_MAP[event.code];

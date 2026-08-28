@@ -2,12 +2,16 @@ import {
   BURST_TIME,
   isVisible,
   MAX_ENTROPY,
+  MISTAKE_YELLOW,
   RETICLE,
   THREAT_PASS_Z,
   THREAT_SPAWN_Z,
+  WIN_TARGET,
   type GameState,
+  type RepairState,
   type Threat,
 } from "./game";
+import { QUESTIONS } from "./questions";
 
 /** Flat black-outline style, per the PRD non-goal that rules out photorealistic art. */
 const INK = "#000";
@@ -16,6 +20,11 @@ const PAPER = "#fff";
 const ALERT = "#d40000";
 /** The one cool colour in the cockpit, reserved for the energy fill — per the reference mockup. */
 const ENERGY_COLOR = "#1e9be0";
+/** Level 2's traffic-light palette, per the "Ręka level2" reference. */
+const LIGHT_YELLOW = "#e0b31e";
+const LIGHT_GREEN = "#1e9e46";
+/** The device screen in the reference art — its own green, distinct from the status light's. */
+const SCREEN_GREEN = "#2ecc59";
 
 /** Canopy occupies the top of the frame; the instrument strip takes the rest. Proportions follow the mockups. */
 const CANOPY_HEIGHT = 0.72;
@@ -23,9 +32,21 @@ const MARGIN = 0.02;
 /** Threat radius in world units, divided by distance to get its apparent size in the canopy. */
 const THREAT_RADIUS = 0.16;
 
+/** Level 2 takes over the whole canvas with its own scene — nothing here belongs to the cockpit. */
+const REPAIR_PHASES: readonly GameState["phase"][] = ["repair", "repaired", "corrupted"];
+
 export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height: number, state: GameState): void {
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = Math.max(2, Math.min(width, height) * 0.006);
+  ctx.lineJoin = "round";
+
+  if (REPAIR_PHASES.includes(state.phase)) {
+    drawServerRepair(ctx, width, height, state);
+    return;
+  }
 
   const margin = Math.min(width, height) * MARGIN;
   const canopy = {
@@ -41,10 +62,6 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height
     h: height - canopy.y - canopy.h - margin * 2,
   };
 
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = Math.max(2, Math.min(width, height) * 0.006);
-  ctx.lineJoin = "round";
-
   drawCanopy(ctx, canopy, state);
   drawInstrumentStrip(ctx, strip, state);
   drawFrameRate(ctx, canopy, state.fps);
@@ -52,17 +69,20 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height
   else if (state.phase !== "playing") drawOverlay(ctx, canopy, state.phase);
 }
 
-/** FR-001/FR-012/FR-013/FR-014: the title/won/lost resting screens, all sharing one layout. */
-const OVERLAY_TEXT: Record<Exclude<GameState["phase"], "playing" | "intro">, { title: string; prompt: string }> = {
+/** FR-001/FR-012/FR-013: the title/wave-cleared/lost resting screens, all sharing one layout. */
+const OVERLAY_TEXT: Record<
+  Exclude<GameState["phase"], "playing" | "intro" | "repair" | "repaired" | "corrupted">,
+  { title: string; prompt: string }
+> = {
   title: { title: "ENTROPY ATTACKS", prompt: "PRESS SPACE TO LAUNCH" },
-  won: { title: "WAVE CLEARED", prompt: "PRESS SPACE TO FLY AGAIN" },
+  "wave-cleared": { title: "WAVE CLEARED", prompt: "PRESS SPACE TO CONTINUE" },
   lost: { title: "CANOPY BREACHED", prompt: "PRESS SPACE TO FLY AGAIN" },
 };
 
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
   canopy: Box,
-  phase: Exclude<GameState["phase"], "playing" | "intro">,
+  phase: Exclude<GameState["phase"], "playing" | "intro" | "repair" | "repaired" | "corrupted">,
 ): void {
   const { title, prompt } = OVERLAY_TEXT[phase];
   const cx = canopy.x + canopy.w / 2;
@@ -158,6 +178,220 @@ interface Box {
   y: number;
   w: number;
   h: number;
+}
+
+const ANSWER_LABELS = ["A", "B", "C"] as const;
+const ANSWER_KEYS = ["4", "5", "6"] as const;
+
+/**
+ * Level 2: a device screen (left) showing the current question and its a/b/c options, a stylised
+ * arm connecting it to a server rack (right) whose status light tracks `repair`. Reuses the flat
+ * black-outline style and the `wrapText` helper the intro briefing already established.
+ */
+function drawServerRepair(ctx: CanvasRenderingContext2D, width: number, height: number, state: GameState): void {
+  const margin = Math.min(width, height) * MARGIN;
+  const device = { x: margin, y: margin, w: width * 0.56 - margin * 1.5, h: height - margin * 2 };
+  const server = {
+    x: device.x + device.w + margin * 2,
+    y: margin,
+    w: width - device.x - device.w - margin * 3,
+    h: height - margin * 2,
+  };
+
+  drawArm(ctx, device, server);
+  drawDevice(ctx, device, state.repair, state.phase);
+  drawServerRack(ctx, server, state.repair, state.phase);
+}
+
+/** A minimal cuff-and-fist shape bridging the device and the server — flavour, not a focal point. */
+function drawArm(ctx: CanvasRenderingContext2D, device: Box, server: Box): void {
+  const armY = device.y + device.h * 0.62;
+  const armH = device.h * 0.3;
+  const x0 = device.x + device.w * 0.94;
+  const x1 = server.x - device.w * 0.02;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x0, armY);
+  ctx.lineTo(x1, armY - armH * 0.14);
+  ctx.lineTo(x1, armY + armH * 1.14);
+  ctx.lineTo(x0, armY + armH);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.stroke(); // Second pass over the same path: a slightly heavier line than the rest of the scene.
+  ctx.restore();
+}
+
+function drawDevice(
+  ctx: CanvasRenderingContext2D,
+  device: Box,
+  repair: RepairState | null,
+  phase: GameState["phase"],
+): void {
+  ctx.beginPath();
+  ctx.roundRect(device.x, device.y, device.w, device.h, device.h * 0.06);
+  ctx.stroke();
+
+  const screen = {
+    x: device.x + device.w * 0.06,
+    y: device.y + device.h * 0.08,
+    w: device.w * 0.88,
+    h: device.h * 0.55,
+  };
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(screen.x, screen.y, screen.w, screen.h, screen.h * 0.08);
+  ctx.fillStyle = repair?.feedback === "correct" ? LIGHT_GREEN : repair?.feedback === "wrong" ? ALERT : SCREEN_GREEN;
+  ctx.fill();
+  ctx.stroke();
+  drawScreenContent(ctx, screen, repair, phase);
+  ctx.restore();
+
+  if (repair !== null && repair.question !== null && repair.feedback === null) {
+    drawAnswerButtons(ctx, device, screen, QUESTIONS[repair.question].options);
+  } else if (phase === "repaired" || phase === "corrupted") {
+    drawContinuePrompt(ctx, device, screen);
+  }
+}
+
+function drawScreenContent(
+  ctx: CanvasRenderingContext2D,
+  screen: Box,
+  repair: RepairState | null,
+  phase: GameState["phase"],
+): void {
+  const cx = screen.x + screen.w / 2;
+  const cy = screen.y + screen.h / 2;
+  ctx.fillStyle = INK;
+  ctx.textAlign = "center";
+
+  if (phase === "repaired" || phase === "corrupted") {
+    ctx.textBaseline = "middle";
+    ctx.font = `bold ${Math.round(screen.h * 0.16)}px system-ui, sans-serif`;
+    const message = phase === "repaired" ? "SERVER NAPRAWIONY" : "SERVER ZNISZCZONY";
+    wrapText(ctx, message, screen.w * 0.85).forEach((line, i, lines) => {
+      ctx.fillText(line, cx, cy + (i - (lines.length - 1) / 2) * screen.h * 0.2);
+    });
+    return;
+  }
+
+  if (repair === null) return;
+
+  if (repair.feedback !== null) {
+    ctx.textBaseline = "middle";
+    ctx.font = `bold ${Math.round(screen.h * 0.2)}px system-ui, sans-serif`;
+    ctx.fillText(repair.feedback === "correct" ? "POPRAWNIE" : "BŁĄD", cx, cy);
+    return;
+  }
+
+  if (repair.question === null) return;
+  ctx.textBaseline = "top";
+  ctx.font = `bold ${Math.round(screen.h * 0.077)}px system-ui, sans-serif`;
+  const lineHeight = screen.h * 0.15;
+  wrapText(ctx, QUESTIONS[repair.question].prompt, screen.w * 0.88).forEach((line, i) => {
+    ctx.fillText(line, cx, screen.y + screen.h * 0.1 + i * lineHeight);
+  });
+}
+
+/** Three stacked rows below the screen, one per option — labelled with both the letter and the key that picks it. */
+function drawAnswerButtons(
+  ctx: CanvasRenderingContext2D,
+  device: Box,
+  screen: Box,
+  options: readonly [string, string, string],
+): void {
+  const top = screen.y + screen.h + device.h * 0.06;
+  const rowH = (device.y + device.h * 0.94 - top) / 3;
+  const gap = rowH * 0.12;
+
+  ctx.fillStyle = INK; // The screen block above leaves fillStyle on PAPER; text would be invisible otherwise.
+  options.forEach((option, i) => {
+    const y = top + i * rowH;
+    const box = { x: device.x + device.w * 0.06, y, w: device.w * 0.88, h: rowH - gap };
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.w, box.h, box.h * 0.2);
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.font = `bold ${Math.round(box.h * 0.44)}px system-ui, sans-serif`;
+    ctx.fillText(ANSWER_LABELS[i], box.x + box.w * 0.03, box.y + box.h / 2);
+
+    ctx.font = `${Math.round(box.h * 0.384)}px system-ui, sans-serif`;
+    wrapText(ctx, option, box.w * 0.72).forEach((line, li, lines) => {
+      ctx.fillText(line, box.x + box.w * 0.13, box.y + box.h / 2 + (li - (lines.length - 1) / 2) * box.h * 0.34);
+    });
+
+    ctx.textAlign = "right";
+    ctx.font = `${Math.round(box.h * 0.3)}px system-ui, sans-serif`;
+    ctx.fillText(`[${ANSWER_KEYS[i]}]`, box.x + box.w * 0.97, box.y + box.h / 2);
+  });
+}
+
+function drawContinuePrompt(ctx: CanvasRenderingContext2D, device: Box, screen: Box): void {
+  ctx.fillStyle = INK;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `${Math.round(device.h * 0.05)}px system-ui, sans-serif`;
+  ctx.fillText("PRESS SPACE TO PLAY AGAIN", device.x + device.w / 2, screen.y + screen.h + device.h * 0.16);
+}
+
+/**
+ * FR mirrors the cockpit's ENERGY/ENTROPY panel: a glanceable status readout. Only one light is ever
+ * lit — unlit means "still nominal, no warning yet" (fewer than MISTAKE_YELLOW mistakes and short of
+ * WIN_TARGET), matching the user's spec that the colour only changes on a mistake or the final win.
+ */
+function drawServerRack(
+  ctx: CanvasRenderingContext2D,
+  server: Box,
+  repair: RepairState | null,
+  phase: GameState["phase"],
+): void {
+  ctx.beginPath();
+  ctx.roundRect(server.x, server.y, server.w, server.h, server.h * 0.03);
+  ctx.stroke();
+
+  const lit = phase === "repaired" ? "green" : phase === "corrupted" ? "red" : lightFromMistakes(repair);
+  const lights: { color: string; on: "red" | "yellow" | "green" }[] = [
+    { color: ALERT, on: "red" },
+    { color: LIGHT_YELLOW, on: "yellow" },
+    { color: LIGHT_GREEN, on: "green" },
+  ];
+
+  const cx = server.x + server.w * 0.22;
+  const spacing = server.h * 0.16;
+  const top = server.y + server.h * 0.18;
+  const r = Math.min(server.w, server.h) * 0.05;
+
+  lights.forEach(({ color, on }, i) => {
+    const cy = top + i * spacing;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = lit === on ? color : PAPER;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(cx + r * 1.6, cy);
+    ctx.lineTo(server.x + server.w * 0.88, cy);
+    ctx.stroke();
+  });
+
+  if (repair !== null) drawRepairProgress(ctx, server, repair, top + lights.length * spacing);
+}
+
+function lightFromMistakes(repair: RepairState | null): "red" | "yellow" | "green" | null {
+  if (repair === null) return null;
+  return repair.mistakes >= MISTAKE_YELLOW ? "yellow" : null;
+}
+
+function drawRepairProgress(ctx: CanvasRenderingContext2D, server: Box, repair: RepairState, y: number): void {
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${Math.round(server.h * 0.045)}px system-ui, sans-serif`;
+  ctx.fillStyle = INK;
+  ctx.fillText(`POPRAWNE: ${repair.correct}/${WIN_TARGET}`, server.x + server.w * 0.08, y + server.h * 0.06);
+  ctx.fillText(`BŁĘDY: ${repair.mistakes}`, server.x + server.w * 0.08, y + server.h * 0.14);
 }
 
 function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState): void {

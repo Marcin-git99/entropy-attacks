@@ -1,4 +1,5 @@
 import { createInput, type Controls, type SteerInput } from "./input";
+import { QUESTIONS } from "./questions";
 import { drawCockpit } from "./render";
 
 export interface Threat {
@@ -22,14 +23,16 @@ export interface Burst {
 }
 
 /**
- * FR-001/FR-012/FR-013/FR-014: the run's lifecycle. "intro" is the story briefing, shown once before
- * the player has ever launched — it carries teaching weight the in-flight messages deliberately don't
- * (see FR-015's rationale), so it is not a tutorial and is never shown again after the first launch.
- * "title" is the pre-launch resting state proper; "won"/"lost" are what a finished run settles into,
- * and the same fire key that advances "intro" also starts a run from "title" or replays it from either
- * end state.
+ * The run's lifecycle. "intro" is the story briefing, shown once before the player has ever
+ * launched — it carries teaching weight the in-flight messages deliberately don't (see FR-015's
+ * rationale), so it is not a tutorial and is never shown again after the first launch. "title" is
+ * the pre-launch resting state proper. Clearing the wave in the cockpit ("wave-cleared") no longer
+ * ends the game — it leads into "repair", Level 2's server-repair minigame, which settles into
+ * "repaired" (the whole game won) or "corrupted" (Level 2's own failure state). "lost" is Level 1's
+ * failure state and, like "repaired"/"corrupted", ends the whole game. The same fire key that
+ * advances "intro" and "wave-cleared" also restarts a fresh run — at Level 1 — from any end state.
  */
-export type Phase = "intro" | "title" | "playing" | "won" | "lost";
+export type Phase = "intro" | "title" | "playing" | "wave-cleared" | "lost" | "repair" | "repaired" | "corrupted";
 
 export interface GameState {
   phase: Phase;
@@ -47,7 +50,8 @@ export interface GameState {
   entropy: number;
   /**
    * FR-012: how many of the wave's threats have been settled — destroyed or passed, either counts.
-   * The wave clears (a win) once this reaches WAVE_SIZE without the run having been lost first.
+   * The wave clears (leading to Level 2) once this reaches WAVE_SIZE without the run having been
+   * lost first.
    */
   resolved: number;
   /** FR-005: whether the threat sits inside the crosshair right now. Recomputed every frame. */
@@ -55,6 +59,26 @@ export interface GameState {
   /** Seconds left on the cannon tracer, so a miss is visible and not just a number going down. */
   flash: number;
   fps: number;
+  /** Level 2 state. Null until the player clears Level 1 and enters "repair". */
+  repair: RepairState | null;
+}
+
+/**
+ * Level 2: a bank of QUESTIONS.length questions, drawn without repeats. `correct` reaching
+ * WIN_TARGET first wins the whole game; `mistakes` reaching MISTAKE_LOSE first ends it in defeat.
+ * The pool is sized so a decision is always reached before it runs out — see WIN_TARGET's comment.
+ */
+export interface RepairState {
+  /** Remaining question indices, shuffled once at the start of Level 2. */
+  queue: number[];
+  /** Index into QUESTIONS of the question currently on screen, or null while feedback is showing. */
+  question: number | null;
+  correct: number;
+  mistakes: number;
+  /** Set the instant an answer is submitted; drives a brief flash before the next question. */
+  feedback: "correct" | "wrong" | null;
+  /** Seconds left on that flash. */
+  feedbackTime: number;
 }
 
 /**
@@ -172,6 +196,18 @@ const INFECTION_ENTROPY = 10;
 /** FR-012: the wave size — top of the PRD's 12-15 range, tuned by the user. */
 export const WAVE_SIZE = 15;
 
+/**
+ * Level 2 thresholds, set by the user. WIN_TARGET correct answers wins outright; the run survives
+ * up to MISTAKE_YELLOW - 1 mistakes unmarked, MISTAKE_YELLOW turns the light amber as a warning, and
+ * MISTAKE_LOSE ends it. QUESTIONS.length (10) covers the worst survivable case — WIN_TARGET correct
+ * plus MISTAKE_LOSE - 1 mistakes is 9 questions — so the pool never runs out before a decision.
+ */
+export const WIN_TARGET = 7;
+export const MISTAKE_YELLOW = 2;
+export const MISTAKE_LOSE = 3;
+/** How long a right/wrong flash holds before the next question — same pacing as BURST_TIME. */
+export const FEEDBACK_TIME = 0.6;
+
 /** FR-013: the run is lost once entropy has nowhere further to go. */
 export function isDefeated(state: GameState): boolean {
   return state.entropy >= MAX_ENTROPY;
@@ -247,7 +283,7 @@ function destroy(state: GameState, threat: Threat): void {
   state.resolved += 1;
 }
 
-/** FR-001/FR-014: (re)starts a run — the same call whether this is the first launch or a replay. */
+/** FR-001/FR-014: (re)starts a run at Level 1 — the same call whether this is the first launch or a replay. */
 function startRun(state: GameState): void {
   state.phase = "playing";
   state.view = { x: 0, y: 0 };
@@ -258,6 +294,81 @@ function startRun(state: GameState): void {
   state.resolved = 0;
   state.locked = false;
   state.flash = 0;
+  state.repair = null;
+}
+
+/** Fisher-Yates: an unbiased shuffle of the question pool for this Level 2 run. */
+function shuffledQuestionIndices(): number[] {
+  const indices = QUESTIONS.map((_, i) => i);
+  for (let i = indices.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  return indices;
+}
+
+/** Enters Level 2 with a freshly shuffled question queue and the first question drawn. */
+function startRepair(state: GameState): void {
+  const queue = shuffledQuestionIndices();
+  state.phase = "repair";
+  state.repair = {
+    queue,
+    question: queue.shift() ?? null,
+    correct: 0,
+    mistakes: 0,
+    feedback: null,
+    feedbackTime: 0,
+  };
+}
+
+/**
+ * Scores the pick against QUESTIONS, then leaves the result on screen for FEEDBACK_TIME before
+ * `advanceRepair` decides whether that was the win, the loss, or just the next question.
+ */
+function answerQuestion(repair: RepairState, choice: 0 | 1 | 2): void {
+  if (repair.question === null) return;
+  const right = QUESTIONS[repair.question].correct === choice;
+  if (right) repair.correct += 1;
+  else repair.mistakes += 1;
+  repair.question = null;
+  repair.feedback = right ? "correct" : "wrong";
+  repair.feedbackTime = FEEDBACK_TIME;
+}
+
+/**
+ * Reads an armed answer pick and consumes it — mirrors `fireArmedWeapons`. Input is ignored while a
+ * feedback flash is showing or after the round has already been decided, same as weapons firing into
+ * a burst that's still playing.
+ */
+function answerArmedChoice(state: GameState, controls: Controls): void {
+  const picked = controls.answer.a ? 0 : controls.answer.b ? 1 : controls.answer.c ? 2 : null;
+  controls.answer.a = false;
+  controls.answer.b = false;
+  controls.answer.c = false;
+
+  const { repair } = state;
+  if (picked === null || repair === null) return;
+  if (repair.question === null || repair.feedback !== null) return;
+  answerQuestion(repair, picked);
+}
+
+/** The Level 2 counterpart to `advance`: ticks the feedback flash, then resolves win/loss/next question. */
+function advanceRepair(state: GameState, dt: number): void {
+  const { repair } = state;
+  if (repair === null) return;
+  if (repair.feedback === null) return;
+
+  repair.feedbackTime -= dt;
+  if (repair.feedbackTime > 0) return;
+  repair.feedback = null;
+
+  if (repair.mistakes >= MISTAKE_LOSE) {
+    state.phase = "corrupted";
+  } else if (repair.correct >= WIN_TARGET) {
+    state.phase = "repaired";
+  } else {
+    repair.question = repair.queue.shift() ?? null;
+  }
 }
 
 export function start(canvas: HTMLCanvasElement): void {
@@ -276,6 +387,7 @@ export function start(canvas: HTMLCanvasElement): void {
     locked: false,
     flash: 0,
     fps: 0,
+    repair: null,
   };
 
   const resize = () => {
@@ -300,14 +412,19 @@ export function start(canvas: HTMLCanvasElement): void {
       applySteering(state.view, controls.steer, dt);
       fireArmedWeapons(state, controls);
       advance(state, dt);
+    } else if (state.phase === "repair") {
+      answerArmedChoice(state, controls);
+      advanceRepair(state, dt);
     } else if (controls.armed.cannon) {
-      // FR-001/FR-014: the fire key doubles as launch/replay — one key to learn, not two.
+      // FR-001/FR-014: the fire key doubles as launch/replay/continue — one key to learn, not two.
       controls.armed.cannon = false;
       controls.armed.rocket = false;
       if (state.phase === "intro") {
         state.phase = "title"; // The briefing only ever advances to the title screen, once.
+      } else if (state.phase === "wave-cleared") {
+        startRepair(state); // FR-012 leads into Level 2, not back to the title screen.
       } else {
-        startRun(state);
+        startRun(state); // title, lost, repaired, corrupted: any of these starts a fresh run.
       }
     }
 
@@ -350,7 +467,7 @@ function advance(state: GameState, dt: number): void {
     if (state.burst.age >= BURST_TIME) {
       state.burst = null;
       if (state.resolved >= WAVE_SIZE) {
-        state.phase = "won"; // FR-012: the wave is clear, and the last kill's burst has played out.
+        state.phase = "wave-cleared"; // FR-012: the wave is clear, and the last kill's burst has played out.
       } else {
         state.threat = spawnThreat();
       }
@@ -369,7 +486,7 @@ function advance(state: GameState, dt: number): void {
     if (isDefeated(state)) {
       state.phase = "lost"; // FR-013: the canopy has shattered.
     } else if (state.resolved >= WAVE_SIZE) {
-      state.phase = "won"; // FR-012: the wave is clear.
+      state.phase = "wave-cleared"; // FR-012: the wave is clear.
     } else {
       state.threat = spawnThreat();
     }
