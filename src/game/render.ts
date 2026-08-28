@@ -25,6 +25,12 @@ const LIGHT_YELLOW = "#e0b31e";
 const LIGHT_GREEN = "#1e9e46";
 /** The device screen in the reference art — its own green, distinct from the status light's. */
 const SCREEN_GREEN = "#2ecc59";
+/**
+ * One typeface for the whole cockpit — a monospace readout instead of the OS-default sans, so
+ * numbers and labels read as instrument data rather than a plain UI. Consolas ships with Windows
+ * (the booth laptop); Courier New is the universal fallback everywhere else.
+ */
+const FONT = '"Consolas", "Courier New", monospace';
 
 /** Canopy occupies the top of the frame; the instrument strip takes the rest. Proportions follow the mockups. */
 const CANOPY_HEIGHT = 0.72;
@@ -97,9 +103,9 @@ function drawOverlay(
   ctx.fillStyle = INK;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `bold ${Math.round(canopy.h * 0.11)}px system-ui, sans-serif`;
+  ctx.font = `bold ${Math.round(canopy.h * 0.11)}px ${FONT}`;
   ctx.fillText(title, cx, cy - canopy.h * 0.06);
-  ctx.font = `${Math.round(canopy.h * 0.05)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(canopy.h * 0.05)}px ${FONT}`;
   ctx.fillText(prompt, cx, cy + canopy.h * 0.08);
   ctx.restore();
 }
@@ -135,13 +141,13 @@ function drawIntro(ctx: CanvasRenderingContext2D, canopy: Box): void {
   ctx.textAlign = "center";
 
   ctx.textBaseline = "top";
-  ctx.font = `bold ${Math.round(canopy.h * 0.075)}px system-ui, sans-serif`;
+  ctx.font = `bold ${Math.round(canopy.h * 0.075)}px ${FONT}`;
   const headingY = canopy.y + canopy.h * 0.1;
   ctx.fillText("ENTROPY ATTACKS", cx, headingY);
 
   const bodySize = canopy.h * 0.042;
   const lineHeight = bodySize * 1.55;
-  ctx.font = `bold ${Math.round(bodySize)}px system-ui, sans-serif`;
+  ctx.font = `bold ${Math.round(bodySize)}px ${FONT}`;
   ctx.textBaseline = "middle";
   const bodyTop = headingY + canopy.h * 0.16;
   const wrapped = BRIEFING_LINES.flatMap((line) => (line === "" ? [""] : wrapText(ctx, line, canopy.w - padding * 2)));
@@ -149,7 +155,7 @@ function drawIntro(ctx: CanvasRenderingContext2D, canopy: Box): void {
     ctx.fillText(line, cx, bodyTop + i * lineHeight);
   });
 
-  ctx.font = `${Math.round(canopy.h * 0.045)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(canopy.h * 0.045)}px ${FONT}`;
   ctx.textBaseline = "bottom";
   ctx.fillText("PRESS SPACE TO CONTINUE", cx, canopy.y + canopy.h * 0.94);
   ctx.restore();
@@ -297,7 +303,7 @@ function drawScreenContent(
 
   if (phase === "repaired" || phase === "corrupted") {
     ctx.textBaseline = "middle";
-    ctx.font = `bold ${Math.round(screen.h * 0.16)}px system-ui, sans-serif`;
+    ctx.font = `bold ${Math.round(screen.h * 0.16)}px ${FONT}`;
     const message = phase === "repaired" ? "SERVER NAPRAWIONY" : "SERVER ZNISZCZONY";
     wrapText(ctx, message, screen.w * 0.85).forEach((line, i, lines) => {
       ctx.fillText(line, cx, cy + (i - (lines.length - 1) / 2) * screen.h * 0.2);
@@ -309,7 +315,7 @@ function drawScreenContent(
 
   if (repair.feedback !== null) {
     ctx.textBaseline = "middle";
-    ctx.font = `bold ${Math.round(screen.h * 0.2)}px system-ui, sans-serif`;
+    ctx.font = `bold ${Math.round(screen.h * 0.2)}px ${FONT}`;
     ctx.fillText(repair.feedback === "correct" ? "POPRAWNIE" : "BŁĄD", cx, cy);
     return;
   }
@@ -328,25 +334,25 @@ function drawQuestionScreen(ctx: CanvasRenderingContext2D, screen: Box, question
   ctx.textBaseline = "top";
   const padX = screen.x + screen.w * 0.06;
   const maxTextW = screen.w * 0.88;
-  let y = screen.y + screen.h * 0.07;
+  let y = screen.y + screen.h * 0.055;
 
-  ctx.font = `bold ${Math.round(screen.h * 0.072)}px "Courier New", monospace`;
-  const promptLineH = screen.h * 0.095;
+  ctx.font = `bold ${Math.round(screen.h * 0.068)}px ${FONT}`;
+  const promptLineH = screen.h * 0.09;
   wrapText(ctx, question.prompt, maxTextW).forEach((line) => {
     ctx.fillText(line, padX, y);
     y += promptLineH;
   });
 
-  y += screen.h * 0.035;
+  y += screen.h * 0.025;
 
-  ctx.font = `${Math.round(screen.h * 0.058)}px "Courier New", monospace`;
-  const optionLineH = screen.h * 0.085;
+  ctx.font = `${Math.round(screen.h * 0.054)}px ${FONT}`;
+  const optionLineH = screen.h * 0.078;
   question.options.forEach((option, i) => {
     wrapText(ctx, `${ANSWER_LABELS[i]}) ${option}`, maxTextW).forEach((line) => {
       ctx.fillText(line, padX, y);
       y += optionLineH;
     });
-    y += optionLineH * 0.2;
+    y += optionLineH * 0.15;
   });
 }
 
@@ -367,7 +373,7 @@ function drawAnswerKeys(ctx: CanvasRenderingContext2D, device: Box, screen: Box)
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.font = `bold ${Math.round(rowH * 0.5)}px system-ui, sans-serif`;
+    ctx.font = `bold ${Math.round(rowH * 0.5)}px ${FONT}`;
     ctx.fillText(label, x + keyW / 2, top + rowH / 2);
   });
 }
@@ -376,7 +382,7 @@ function drawContinuePrompt(ctx: CanvasRenderingContext2D, device: Box, screen: 
   ctx.fillStyle = INK;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `${Math.round(device.h * 0.05)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(device.h * 0.05)}px ${FONT}`;
   ctx.fillText("PRESS SPACE TO PLAY AGAIN", device.x + device.w / 2, screen.y + screen.h + device.h * 0.16);
 }
 
@@ -432,7 +438,7 @@ function lightFromMistakes(repair: RepairState | null): "red" | "yellow" | "gree
 function drawRepairProgress(ctx: CanvasRenderingContext2D, server: Box, repair: RepairState, y: number): void {
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.font = `${Math.round(server.h * 0.045)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(server.h * 0.045)}px ${FONT}`;
   ctx.fillStyle = INK;
   ctx.fillText(`POPRAWNE: ${repair.correct}/${WIN_TARGET}`, server.x + server.w * 0.08, y + server.h * 0.06);
   ctx.fillText(`BŁĘDY: ${repair.mistakes}`, server.x + server.w * 0.08, y + server.h * 0.14);
@@ -632,7 +638,7 @@ function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box, state: G
   const widths = [0.4, 0.22, 0.38];
   let x = strip.x;
 
-  ctx.font = `${Math.round(strip.h * 0.18)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(strip.h * 0.18)}px ${FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillStyle = INK;
@@ -690,14 +696,14 @@ function drawVerticalGauge(
 
   ctx.save();
 
-  ctx.font = `${Math.round(colH * 0.12)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(colH * 0.12)}px ${FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillStyle = INK;
   ctx.fillText(label, colX + colW / 2, colY + colH * 0.24);
 
   // The tick bracket: a spine with three ticks, read top to bottom as 100 / 50 / 0.
-  ctx.font = `${Math.round(colH * 0.09)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(colH * 0.09)}px ${FONT}`;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
   ctx.beginPath();
@@ -799,7 +805,7 @@ function drawAmmo(ctx: CanvasRenderingContext2D, panel: Box, ammo: GameState["am
 
 /** The PRD asks for a steady 60 fps; without a readout that requirement is unfalsifiable while developing. */
 function drawFrameRate(ctx: CanvasRenderingContext2D, canopy: Box, fps: number): void {
-  ctx.font = `${Math.round(canopy.h * 0.06)}px system-ui, sans-serif`;
+  ctx.font = `${Math.round(canopy.h * 0.06)}px ${FONT}`;
   ctx.textAlign = "right";
   ctx.textBaseline = "top";
   ctx.fillStyle = INK;
