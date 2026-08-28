@@ -48,17 +48,22 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height
   drawCanopy(ctx, canopy, state);
   drawInstrumentStrip(ctx, strip, state);
   drawFrameRate(ctx, canopy, state.fps);
-  if (state.phase !== "playing") drawOverlay(ctx, canopy, state.phase);
+  if (state.phase === "intro") drawIntro(ctx, canopy);
+  else if (state.phase !== "playing") drawOverlay(ctx, canopy, state.phase);
 }
 
 /** FR-001/FR-012/FR-013/FR-014: the title/won/lost resting screens, all sharing one layout. */
-const OVERLAY_TEXT: Record<Exclude<GameState["phase"], "playing">, { title: string; prompt: string }> = {
+const OVERLAY_TEXT: Record<Exclude<GameState["phase"], "playing" | "intro">, { title: string; prompt: string }> = {
   title: { title: "ENTROPY ATTACKS", prompt: "PRESS SPACE TO LAUNCH" },
   won: { title: "WAVE CLEARED", prompt: "PRESS SPACE TO FLY AGAIN" },
   lost: { title: "CANOPY BREACHED", prompt: "PRESS SPACE TO FLY AGAIN" },
 };
 
-function drawOverlay(ctx: CanvasRenderingContext2D, canopy: Box, phase: Exclude<GameState["phase"], "playing">): void {
+function drawOverlay(
+  ctx: CanvasRenderingContext2D,
+  canopy: Box,
+  phase: Exclude<GameState["phase"], "playing" | "intro">,
+): void {
   const { title, prompt } = OVERLAY_TEXT[phase];
   const cx = canopy.x + canopy.w / 2;
   const cy = canopy.y + canopy.h / 2;
@@ -77,6 +82,75 @@ function drawOverlay(ctx: CanvasRenderingContext2D, canopy: Box, phase: Exclude<
   ctx.font = `${Math.round(canopy.h * 0.05)}px system-ui, sans-serif`;
   ctx.fillText(prompt, cx, cy + canopy.h * 0.08);
   ctx.restore();
+}
+
+/**
+ * FR-015's rationale calls this "the opening briefing" — the PRD leans on it to carry the teaching
+ * goal the in-flight messages deliberately don't, since it's the one screen a player is expected to
+ * actually read rather than glance past mid-combat. Shown once, before the title screen, never again.
+ */
+const BRIEFING_LINES = [
+  "Planeta REPO w wyniku nadmiernej eksploatacji zasobów stała się niestabilna",
+  "sejsmicznie i klimatycznie. Życie na planecie podtrzymuje centralny LLM,",
+  "który steruje wszystkimi procesami.",
+  "",
+  "Niestety REPO nawiedzają również istoty z systemów Rozmytych — tak zwane",
+  "ENTROPY. Bliski kontakt z ENTROPAMI powoduje wstrzyknięcie — Bad Code",
+  "Injection — co podnosi ENTROPIĘ i prowadzi do zniszczenia systemu.",
+  "",
+  "Musisz temu zapobiec.",
+];
+
+function drawIntro(ctx: CanvasRenderingContext2D, canopy: Box): void {
+  const cx = canopy.x + canopy.w / 2;
+  const padding = canopy.w * 0.1;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
+  ctx.fillStyle = PAPER;
+  ctx.fill();
+
+  ctx.fillStyle = INK;
+  ctx.textAlign = "center";
+
+  ctx.textBaseline = "top";
+  ctx.font = `bold ${Math.round(canopy.h * 0.075)}px system-ui, sans-serif`;
+  const headingY = canopy.y + canopy.h * 0.1;
+  ctx.fillText("ENTROPY ATTACKS", cx, headingY);
+
+  const bodySize = canopy.h * 0.042;
+  const lineHeight = bodySize * 1.55;
+  ctx.font = `bold ${Math.round(bodySize)}px system-ui, sans-serif`;
+  ctx.textBaseline = "middle";
+  const bodyTop = headingY + canopy.h * 0.16;
+  const wrapped = BRIEFING_LINES.flatMap((line) => (line === "" ? [""] : wrapText(ctx, line, canopy.w - padding * 2)));
+  wrapped.forEach((line, i) => {
+    ctx.fillText(line, cx, bodyTop + i * lineHeight);
+  });
+
+  ctx.font = `${Math.round(canopy.h * 0.045)}px system-ui, sans-serif`;
+  ctx.textBaseline = "bottom";
+  ctx.fillText("PRESS SPACE TO CONTINUE", cx, canopy.y + canopy.h * 0.94);
+  ctx.restore();
+}
+
+/** Greedy word-wrap: canvas text has no native wrapping, so lines are broken to fit `maxWidth`. */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current === "" ? word : `${current} ${word}`;
+    if (ctx.measureText(candidate).width > maxWidth && current !== "") {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current !== "") lines.push(current);
+  return lines;
 }
 
 interface Box {

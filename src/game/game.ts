@@ -22,11 +22,14 @@ export interface Burst {
 }
 
 /**
- * FR-001/FR-012/FR-013/FR-014: the run's lifecycle. "title" is the pre-launch and post-run resting
- * state's opposite number — "won"/"lost" are what a finished run settles into, and the same
- * fire key that starts the first run from "title" starts the next one from either of those.
+ * FR-001/FR-012/FR-013/FR-014: the run's lifecycle. "intro" is the story briefing, shown once before
+ * the player has ever launched — it carries teaching weight the in-flight messages deliberately don't
+ * (see FR-015's rationale), so it is not a tutorial and is never shown again after the first launch.
+ * "title" is the pre-launch resting state proper; "won"/"lost" are what a finished run settles into,
+ * and the same fire key that advances "intro" also starts a run from "title" or replays it from either
+ * end state.
  */
-export type Phase = "title" | "playing" | "won" | "lost";
+export type Phase = "intro" | "title" | "playing" | "won" | "lost";
 
 export interface GameState {
   phase: Phase;
@@ -263,7 +266,7 @@ export function start(canvas: HTMLCanvasElement): void {
 
   const controls = createInput(window);
   const state: GameState = {
-    phase: "title",
+    phase: "intro",
     view: { x: 0, y: 0 },
     threat: null,
     burst: null,
@@ -301,7 +304,11 @@ export function start(canvas: HTMLCanvasElement): void {
       // FR-001/FR-014: the fire key doubles as launch/replay — one key to learn, not two.
       controls.armed.cannon = false;
       controls.armed.rocket = false;
-      startRun(state);
+      if (state.phase === "intro") {
+        state.phase = "title"; // The briefing only ever advances to the title screen, once.
+      } else {
+        startRun(state);
+      }
     }
 
     framesSinceSample += 1;
