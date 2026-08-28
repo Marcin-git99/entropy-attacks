@@ -14,14 +14,18 @@ import {
 } from "./game";
 import { QUESTIONS } from "./questions";
 
-/** Flat black-outline style, per the PRD non-goal that rules out photorealistic art. */
-const INK = "#000";
-const PAPER = "#fff";
+/**
+ * Flat, vector-only construction — still the PRD non-goal's line, just inverted: light linework on a
+ * dark ground instead of black on white, per the Przeprogramowani reference. No photographic or
+ * rendered art either way; every shape here is still a canvas primitive.
+ */
+const INK = "#eef1f5";
+const PAPER = "#14141c";
 /** A dimming scrim behind modal text (title/wave-cleared/lost) — PAPER, not quite opaque. */
-const OVERLAY_BG = "rgba(255, 255, 255, 0.9)";
+const OVERLAY_BG = "rgba(20, 20, 28, 0.92)";
 
 /**
- * The cockpit's whole accent vocabulary — four colours, each with exactly one meaning, reused
+ * The cockpit's whole accent vocabulary — five colours, each with exactly one meaning, reused
  * everywhere rather than picked per screen:
  *   ALERT (red)         — danger and the player's own combat action, which read as one thing in
  *                          this game: threat blip, entropy fill, cracks, tracers, burst, the locked
@@ -30,6 +34,9 @@ const OVERLAY_BG = "rgba(255, 255, 255, 0.9)";
  *   LIGHT_YELLOW        — warning: the mistake-threshold status light. Nothing else uses yellow.
  *   ENERGY_COLOR (blue) — the one cool colour, reserved for the energy gauge alone, so its reading
  *                         never competes visually with the red/green/yellow verdict colours above.
+ *   ACCENT (orange)     — call to action, and only that: every "press space" prompt is drawn as a
+ *                         filled pill in this colour (`drawCtaButton`) rather than bare text, so the
+ *                         one thing the player should do next is never ambiguous with a status light.
  * SCREEN_GREEN sits outside this vocabulary on purpose: it is the device's screen-glass colour from
  * the "Ręka level2" reference, not a status a player reads meaning into.
  */
@@ -37,6 +44,7 @@ const ALERT = "#d40000";
 const ENERGY_COLOR = "#1e9be0";
 const LIGHT_YELLOW = "#e0b31e";
 const LIGHT_GREEN = "#1e9e46";
+const ACCENT = "#e8720d";
 const SCREEN_GREEN = "#2ecc59";
 /**
  * One typeface for the whole cockpit — a monospace readout instead of the OS-default sans, so
@@ -52,13 +60,35 @@ const MARGIN = 0.02;
 const THREAT_RADIUS = 0.16;
 /** Screen-shake displacement per unit of `state.shake`, as a fraction of the canopy's own height. */
 const SHAKE_AMPLITUDE = 0.03;
+/**
+ * Line-weight hierarchy: every stroke used the same width, which read as one flat wireframe rather
+ * than a panel with things mounted on it. Structural borders (canopy, device, server rack, the three
+ * instrument-strip panels) scale up by this factor; everything mounted inside them — gauges, pips,
+ * ticks, the crosshair, HUD corners — stays at the base width set once in `drawCockpit`.
+ */
+const MAIN_LINE_SCALE = 1.7;
 
 /** Level 2 takes over the whole canvas with its own scene — nothing here belongs to the cockpit. */
 const REPAIR_PHASES: readonly GameState["phase"][] = ["repair", "repaired", "corrupted"];
 
-export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height: number, state: GameState): void {
-  ctx.fillStyle = PAPER;
+/** A soft radial glow instead of a flat fill — cheap on a canvas primitive, echoes the reference's ambient light. */
+function drawBackground(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  const gradient = ctx.createRadialGradient(
+    width / 2,
+    height * 0.4,
+    0,
+    width / 2,
+    height * 0.4,
+    Math.max(width, height) * 0.8,
+  );
+  gradient.addColorStop(0, "#1e1f2c");
+  gradient.addColorStop(1, PAPER);
+  ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, width, height);
+}
+
+export function drawCockpit(ctx: CanvasRenderingContext2D, width: number, height: number, state: GameState): void {
+  drawBackground(ctx, width, height);
 
   ctx.strokeStyle = INK;
   ctx.lineWidth = Math.max(2, Math.min(width, height) * 0.006);
@@ -120,9 +150,9 @@ function drawOverlay(
   ctx.textBaseline = "middle";
   ctx.font = `bold ${Math.round(canopy.h * 0.11)}px ${FONT}`;
   ctx.fillText(title, cx, cy - canopy.h * 0.06);
-  ctx.font = `${Math.round(canopy.h * 0.05)}px ${FONT}`;
-  ctx.fillText(prompt, cx, cy + canopy.h * 0.08);
   ctx.restore();
+
+  drawCtaButton(ctx, cx, cy + canopy.h * 0.13, prompt, canopy.h * 0.045);
 }
 
 /**
@@ -170,9 +200,38 @@ function drawIntro(ctx: CanvasRenderingContext2D, canopy: Box): void {
     ctx.fillText(line, cx, bodyTop + i * lineHeight);
   });
 
-  ctx.font = `${Math.round(canopy.h * 0.045)}px ${FONT}`;
-  ctx.textBaseline = "bottom";
-  ctx.fillText("PRESS SPACE TO CONTINUE", cx, canopy.y + canopy.h * 0.94);
+  ctx.restore();
+
+  drawCtaButton(ctx, cx, canopy.y + canopy.h * 0.9, "PRESS SPACE TO CONTINUE", canopy.h * 0.045);
+}
+
+/**
+ * A drawn call-to-action pill — every "press space" prompt in the game, sized to its own text. The
+ * flat-outline equivalent of a real CTA button (rounded, filled, high-contrast label) rather than
+ * plain text sitting on the background, borrowed from the Przeprogramowani reference without pulling
+ * in anything photorealistic.
+ */
+function drawCtaButton(ctx: CanvasRenderingContext2D, cx: number, cy: number, text: string, fontSize: number): void {
+  ctx.save();
+  ctx.font = `bold ${Math.round(fontSize)}px ${FONT}`;
+  const padX = fontSize * 0.9;
+  const padY = fontSize * 0.55;
+  const w = ctx.measureText(text).width + padX * 2;
+  const h = fontSize + padY * 2;
+
+  ctx.shadowColor = ACCENT;
+  ctx.shadowBlur = fontSize * 0.6;
+  ctx.beginPath();
+  ctx.roundRect(cx - w / 2, cy - h / 2, w, h, h / 2);
+  ctx.fillStyle = ACCENT;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.stroke();
+
+  ctx.fillStyle = INK;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, cx, cy);
   ctx.restore();
 }
 
@@ -279,9 +338,12 @@ function drawDevice(
   repair: RepairState | null,
   phase: GameState["phase"],
 ): void {
+  ctx.save();
+  ctx.lineWidth *= MAIN_LINE_SCALE;
   ctx.beginPath();
   ctx.roundRect(device.x, device.y, device.w, device.h, device.h * 0.06);
   ctx.stroke();
+  ctx.restore();
 
   const screen = {
     x: device.x + device.w * 0.06,
@@ -394,11 +456,13 @@ function drawAnswerKeys(ctx: CanvasRenderingContext2D, device: Box, screen: Box)
 }
 
 function drawContinuePrompt(ctx: CanvasRenderingContext2D, device: Box, screen: Box): void {
-  ctx.fillStyle = INK;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.font = `${Math.round(device.h * 0.05)}px ${FONT}`;
-  ctx.fillText("PRESS SPACE TO PLAY AGAIN", device.x + device.w / 2, screen.y + screen.h + device.h * 0.16);
+  drawCtaButton(
+    ctx,
+    device.x + device.w / 2,
+    screen.y + screen.h + device.h * 0.16,
+    "PRESS SPACE TO PLAY AGAIN",
+    device.h * 0.045,
+  );
 }
 
 /**
@@ -412,9 +476,12 @@ function drawServerRack(
   repair: RepairState | null,
   phase: GameState["phase"],
 ): void {
+  ctx.save();
+  ctx.lineWidth *= MAIN_LINE_SCALE;
   ctx.beginPath();
   ctx.roundRect(server.x, server.y, server.w, server.h, server.h * 0.03);
   ctx.stroke();
+  ctx.restore();
 
   const lit = phase === "repaired" ? "green" : phase === "corrupted" ? "red" : lightFromMistakes(repair);
   const lights: { color: string; on: "red" | "yellow" | "green" }[] = [
@@ -497,9 +564,12 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
     ctx.translate((Math.random() * 2 - 1) * amp, (Math.random() * 2 - 1) * amp);
   }
 
+  ctx.save();
+  ctx.lineWidth *= MAIN_LINE_SCALE;
   ctx.beginPath();
   ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
   ctx.stroke();
+  ctx.restore();
   drawHudCorners(ctx, canopy, canopy.h * 0.05, canopy.h * 0.09);
 
   // Threats live in view-relative space: steering pans the view, so the threat slides across the canopy
@@ -720,7 +790,10 @@ function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box, state: G
 
   for (const [index, label] of ["ARM", "RADAR", "ENERGY / ENTROPY"].entries()) {
     const w = strip.w * widths[index];
+    ctx.save();
+    ctx.lineWidth *= MAIN_LINE_SCALE;
     ctx.strokeRect(x, strip.y, w, strip.h);
+    ctx.restore();
     const panel = { x, y: strip.y, w, h: strip.h };
     if (label === "ARM") {
       ctx.fillText(label, x + w / 2, strip.y + strip.h * 0.14);
