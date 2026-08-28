@@ -23,6 +23,9 @@ const INK = "#eef1f5";
 const PAPER = "#14141c";
 /** A dimming scrim behind modal text (title/wave-cleared/lost) — PAPER, not quite opaque. */
 const OVERLAY_BG = "rgba(20, 20, 28, 0.92)";
+/** A shade above PAPER — the "card" a main panel sits on, giving it a surface to cast a shadow onto. */
+const PANEL_SURFACE = "#1c1e2a";
+const PANEL_SHADOW = "rgba(0, 0, 0, 0.55)";
 
 /**
  * The cockpit's whole accent vocabulary — five colours, each with exactly one meaning, reused
@@ -338,6 +341,10 @@ function drawDevice(
   repair: RepairState | null,
   phase: GameState["phase"],
 ): void {
+  ctx.beginPath();
+  ctx.roundRect(device.x, device.y, device.w, device.h, device.h * 0.06);
+  fillPanelSurface(ctx, device.h);
+
   ctx.save();
   ctx.lineWidth *= MAIN_LINE_SCALE;
   ctx.beginPath();
@@ -356,6 +363,10 @@ function drawDevice(
   ctx.roundRect(screen.x, screen.y, screen.w, screen.h, screen.h * 0.08);
   ctx.fillStyle = repair?.feedback === "correct" ? LIGHT_GREEN : repair?.feedback === "wrong" ? ALERT : SCREEN_GREEN;
   ctx.fill();
+  ctx.save();
+  ctx.clip();
+  drawGlossOverlay(ctx, screen.x, screen.y, screen.w, screen.h * 0.55);
+  ctx.restore();
   ctx.stroke();
   drawScreenContent(ctx, screen, repair, phase);
   ctx.restore();
@@ -476,6 +487,10 @@ function drawServerRack(
   repair: RepairState | null,
   phase: GameState["phase"],
 ): void {
+  ctx.beginPath();
+  ctx.roundRect(server.x, server.y, server.w, server.h, server.h * 0.03);
+  fillPanelSurface(ctx, server.h);
+
   ctx.save();
   ctx.lineWidth *= MAIN_LINE_SCALE;
   ctx.beginPath();
@@ -564,6 +579,10 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
     ctx.translate((Math.random() * 2 - 1) * amp, (Math.random() * 2 - 1) * amp);
   }
 
+  ctx.beginPath();
+  ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
+  fillPanelSurface(ctx, canopy.h);
+
   ctx.save();
   ctx.lineWidth *= MAIN_LINE_SCALE;
   ctx.beginPath();
@@ -610,6 +629,21 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
 
   drawCrosshair(ctx, centreX, centreY, unit, state.locked);
   drawCracks(ctx, canopy, state.entropy);
+  ctx.restore();
+}
+
+/**
+ * Fills the current path with PANEL_SURFACE and drops a soft shadow under it — the "floating card"
+ * a main panel sits on. Shadow state is scoped to this call alone; callers stroke the crisp border
+ * afterwards, unaffected. Call `beginPath` + shape the path just before calling this.
+ */
+function fillPanelSurface(ctx: CanvasRenderingContext2D, panelHeight: number): void {
+  ctx.save();
+  ctx.shadowColor = PANEL_SHADOW;
+  ctx.shadowBlur = panelHeight * 0.06;
+  ctx.shadowOffsetY = panelHeight * 0.02;
+  ctx.fillStyle = PANEL_SURFACE;
+  ctx.fill();
   ctx.restore();
 }
 
@@ -790,6 +824,10 @@ function drawInstrumentStrip(ctx: CanvasRenderingContext2D, strip: Box, state: G
 
   for (const [index, label] of ["ARM", "RADAR", "ENERGY / ENTROPY"].entries()) {
     const w = strip.w * widths[index];
+    ctx.beginPath();
+    ctx.rect(x, strip.y, w, strip.h);
+    fillPanelSurface(ctx, strip.h);
+
     ctx.save();
     ctx.lineWidth *= MAIN_LINE_SCALE;
     ctx.strokeRect(x, strip.y, w, strip.h);
@@ -869,11 +907,23 @@ function drawVerticalGauge(
 
   // The bar itself, filled from the bottom up — 0% is an empty outline, 100% is solid.
   ctx.strokeRect(barX, barTop, barW, barH);
-  ctx.fillStyle = fill;
   const fillH = barH * clamp01(fraction);
-  ctx.fillRect(barX, barTop + barH - fillH, barW, fillH);
+  const fillY = barTop + barH - fillH;
+  ctx.fillStyle = fill;
+  ctx.fillRect(barX, fillY, barW, fillH);
+  drawGlossOverlay(ctx, barX, fillY, barW, fillH);
 
   ctx.restore();
+}
+
+/** A soft light-to-transparent gradient over a filled shape — the glass/glossy read modern UI bars use. */
+function drawGlossOverlay(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  if (h <= 0) return;
+  const gloss = ctx.createLinearGradient(0, y, 0, y + h);
+  gloss.addColorStop(0, "rgba(255, 255, 255, 0.3)");
+  gloss.addColorStop(0.6, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = gloss;
+  ctx.fillRect(x, y, w, h);
 }
 
 /**
