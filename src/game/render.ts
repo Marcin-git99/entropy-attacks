@@ -190,11 +190,14 @@ const ANSWER_KEYS = ["4", "5", "6"] as const;
  */
 function drawServerRepair(ctx: CanvasRenderingContext2D, width: number, height: number, state: GameState): void {
   const margin = Math.min(width, height) * MARGIN;
-  const device = { x: margin, y: margin, w: width * 0.56 - margin * 1.5, h: height - margin * 2 };
+  const device = { x: margin, y: margin, w: width * 0.58 - margin * 1.5, h: height - margin * 2 };
+  // A dedicated gap for the forearm/fist — wide enough for its knuckle bumps and fingertip creases,
+  // which a thin connector strip (as when the arm was flavour-only) couldn't fit.
+  const armGap = width * 0.12;
   const server = {
-    x: device.x + device.w + margin * 2,
+    x: device.x + device.w + armGap,
     y: margin,
-    w: width - device.x - device.w - margin * 3,
+    w: width - device.x - device.w - armGap - margin,
     h: height - margin * 2,
   };
 
@@ -203,22 +206,50 @@ function drawServerRepair(ctx: CanvasRenderingContext2D, width: number, height: 
   drawServerRack(ctx, server, state.repair, state.phase);
 }
 
-/** A minimal cuff-and-fist shape bridging the device and the server — flavour, not a focal point. */
+/**
+ * A left forearm bridging the device and the server, clenched into a fist — per the "Ręka level2"
+ * reference: three knuckle bumps along the top, fingertip creases on the far edge, a thumb tucked
+ * under the bottom. Flavour, not a focal point, so the shape stays inside the device's own bounds.
+ */
 function drawArm(ctx: CanvasRenderingContext2D, device: Box, server: Box): void {
-  const armY = device.y + device.h * 0.62;
-  const armH = device.h * 0.3;
-  const x0 = device.x + device.w * 0.94;
-  const x1 = server.x - device.w * 0.02;
+  const gap = server.x - (device.x + device.w);
+  const x0 = device.x + device.w * 0.98; // emerges from just inside the device's edge, hidden under its border
+  const x1 = server.x - gap * 0.12; // stops just short of the server box
+  const spanX = x1 - x0;
+
+  const wristTopY = device.y + device.h * 0.58;
+  const wristBotY = device.y + device.h * 0.86;
+  const fistTopY = device.y + device.h * 0.34;
+  const fistBotY = device.y + device.h * 0.92;
+  const knuckleTopY = device.y + device.h * 0.22;
+  const knuckleDipY = device.y + device.h * 0.29;
+  const thumbTipY = device.y + device.h * 0.98;
+
+  const knuckleXs = [x0 + spanX * 0.42, x0 + spanX * 0.65, x0 + spanX * 0.86];
 
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(x0, armY);
-  ctx.lineTo(x1, armY - armH * 0.14);
-  ctx.lineTo(x1, armY + armH * 1.14);
-  ctx.lineTo(x0, armY + armH);
+  ctx.moveTo(x0, wristTopY);
+  ctx.quadraticCurveTo(x0 + spanX * 0.22, fistTopY, knuckleXs[0], knuckleTopY);
+  ctx.quadraticCurveTo(knuckleXs[0] + spanX * 0.07, knuckleDipY, knuckleXs[1], knuckleTopY);
+  ctx.quadraticCurveTo(knuckleXs[1] + spanX * 0.07, knuckleDipY, knuckleXs[2], knuckleTopY);
+  ctx.quadraticCurveTo(x1, knuckleTopY, x1, fistTopY);
+  ctx.lineTo(x1, fistBotY);
+  ctx.quadraticCurveTo(x0 + spanX * 0.55, fistBotY, x0 + spanX * 0.42, thumbTipY);
+  ctx.quadraticCurveTo(x0 + spanX * 0.3, fistBotY, x0, wristBotY);
   ctx.closePath();
   ctx.stroke();
-  ctx.stroke(); // Second pass over the same path: a slightly heavier line than the rest of the scene.
+  ctx.restore();
+
+  // Fingertip creases on the fist's far edge — the ends of the curled fingers, seen from the side.
+  ctx.save();
+  [0.35, 0.55, 0.75].forEach((t) => {
+    const y = fistTopY + (fistBotY - fistTopY) * t;
+    ctx.beginPath();
+    ctx.moveTo(x1 - spanX * 0.07, y - device.h * 0.025);
+    ctx.lineTo(x1 - spanX * 0.07, y + device.h * 0.025);
+    ctx.stroke();
+  });
   ctx.restore();
 }
 
@@ -236,7 +267,7 @@ function drawDevice(
     x: device.x + device.w * 0.06,
     y: device.y + device.h * 0.08,
     w: device.w * 0.88,
-    h: device.h * 0.55,
+    h: device.h * 0.68,
   };
   ctx.save();
   ctx.beginPath();
@@ -248,7 +279,7 @@ function drawDevice(
   ctx.restore();
 
   if (repair !== null && repair.question !== null && repair.feedback === null) {
-    drawAnswerButtons(ctx, device, screen, QUESTIONS[repair.question].options);
+    drawAnswerKeys(ctx, device, screen);
   } else if (phase === "repaired" || phase === "corrupted") {
     drawContinuePrompt(ctx, device, screen);
   }
@@ -285,46 +316,63 @@ function drawScreenContent(
   }
 
   if (repair.question === null) return;
+  drawQuestionScreen(ctx, screen, QUESTIONS[repair.question]);
+}
+
+/**
+ * Question and its three options together, terminal-style, on the wrist device's own LCD — per the
+ * "Ręka level2" reference, where the screen carries all the text and the physical keys below it
+ * carry only the letter. Monospace stands in for the reference's blocky LCD digits.
+ */
+function drawQuestionScreen(ctx: CanvasRenderingContext2D, screen: Box, question: (typeof QUESTIONS)[number]): void {
+  ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.font = `bold ${Math.round(screen.h * 0.077)}px system-ui, sans-serif`;
-  const lineHeight = screen.h * 0.15;
-  wrapText(ctx, QUESTIONS[repair.question].prompt, screen.w * 0.88).forEach((line, i) => {
-    ctx.fillText(line, cx, screen.y + screen.h * 0.1 + i * lineHeight);
+  const padX = screen.x + screen.w * 0.06;
+  const maxTextW = screen.w * 0.88;
+  let y = screen.y + screen.h * 0.07;
+
+  ctx.font = `bold ${Math.round(screen.h * 0.072)}px "Courier New", monospace`;
+  const promptLineH = screen.h * 0.095;
+  wrapText(ctx, question.prompt, maxTextW).forEach((line) => {
+    ctx.fillText(line, padX, y);
+    y += promptLineH;
+  });
+
+  y += screen.h * 0.035;
+
+  ctx.font = `${Math.round(screen.h * 0.058)}px "Courier New", monospace`;
+  const optionLineH = screen.h * 0.085;
+  question.options.forEach((option, i) => {
+    wrapText(ctx, `${ANSWER_LABELS[i]}) ${option}`, maxTextW).forEach((line) => {
+      ctx.fillText(line, padX, y);
+      y += optionLineH;
+    });
+    y += optionLineH * 0.2;
   });
 }
 
-/** Three stacked rows below the screen, one per option — labelled with both the letter and the key that picks it. */
-function drawAnswerButtons(
-  ctx: CanvasRenderingContext2D,
-  device: Box,
-  screen: Box,
-  options: readonly [string, string, string],
-): void {
-  const top = screen.y + screen.h + device.h * 0.06;
-  const rowH = (device.y + device.h * 0.94 - top) / 3;
-  const gap = rowH * 0.12;
+/** The physical A/B/C keys below the screen — small keycaps, letter only, per the reference drawing. */
+function drawAnswerKeys(ctx: CanvasRenderingContext2D, device: Box, screen: Box): void {
+  const top = screen.y + screen.h + device.h * 0.05;
+  const rowH = device.y + device.h * 0.94 - top;
+  const keyW = device.w * 0.22;
+  const gap = (device.w * 0.88 - keyW * 3) / 2;
+  const startX = device.x + device.w * 0.06;
 
   ctx.fillStyle = INK; // The screen block above leaves fillStyle on PAPER; text would be invisible otherwise.
-  options.forEach((option, i) => {
-    const y = top + i * rowH;
-    const box = { x: device.x + device.w * 0.06, y, w: device.w * 0.88, h: rowH - gap };
+  ANSWER_LABELS.forEach((label, i) => {
+    const x = startX + i * (keyW + gap);
     ctx.beginPath();
-    ctx.roundRect(box.x, box.y, box.w, box.h, box.h * 0.2);
+    ctx.roundRect(x, top, keyW, rowH, rowH * 0.22);
     ctx.stroke();
 
-    ctx.textAlign = "left";
+    ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.font = `bold ${Math.round(box.h * 0.44)}px system-ui, sans-serif`;
-    ctx.fillText(ANSWER_LABELS[i], box.x + box.w * 0.03, box.y + box.h / 2);
+    ctx.font = `bold ${Math.round(rowH * 0.4)}px system-ui, sans-serif`;
+    ctx.fillText(label, x + keyW / 2, top + rowH * 0.4);
 
-    ctx.font = `${Math.round(box.h * 0.384)}px system-ui, sans-serif`;
-    wrapText(ctx, option, box.w * 0.72).forEach((line, li, lines) => {
-      ctx.fillText(line, box.x + box.w * 0.13, box.y + box.h / 2 + (li - (lines.length - 1) / 2) * box.h * 0.34);
-    });
-
-    ctx.textAlign = "right";
-    ctx.font = `${Math.round(box.h * 0.3)}px system-ui, sans-serif`;
-    ctx.fillText(`[${ANSWER_KEYS[i]}]`, box.x + box.w * 0.97, box.y + box.h / 2);
+    ctx.font = `${Math.round(rowH * 0.2)}px system-ui, sans-serif`;
+    ctx.fillText(`[${ANSWER_KEYS[i]}]`, x + keyW / 2, top + rowH * 0.75);
   });
 }
 
