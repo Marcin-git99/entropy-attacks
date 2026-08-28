@@ -48,15 +48,14 @@ const WEAPON_MAP: Partial<Record<string, keyof Controls["armed"]>> = {
 };
 
 /**
- * Level 2 reuses the same physical row instead of teaching a new layout: 4/5/6 already read as
- * left/centre/right from steering, which maps directly onto three answers laid out left to right.
- * Steering itself is inert in the repair scene (nothing to fly), so the keys are free to mean
- * something else there.
+ * Level 2's answer keys are the letters themselves — A/B/C on the keyboard match the A/B/C printed
+ * on the device's keycaps, so there is nothing to learn or explain. Matched on `event.code` for the
+ * same reason steering is: it reports the physical key regardless of layout or modifier state.
  */
 const ANSWER_MAP: Partial<Record<string, keyof Controls["answer"]>> = {
-  Numpad4: "a",
-  Numpad5: "b",
-  Numpad6: "c",
+  KeyA: "a",
+  KeyB: "b",
+  KeyC: "c",
 };
 
 export function createInput(target: Window): Controls {

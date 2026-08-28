@@ -181,7 +181,6 @@ interface Box {
 }
 
 const ANSWER_LABELS = ["A", "B", "C"] as const;
-const ANSWER_KEYS = ["4", "5", "6"] as const;
 
 /**
  * Level 2: a device screen (left) showing the current question and its a/b/c options, a stylised
@@ -368,11 +367,8 @@ function drawAnswerKeys(ctx: CanvasRenderingContext2D, device: Box, screen: Box)
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.font = `bold ${Math.round(rowH * 0.4)}px system-ui, sans-serif`;
-    ctx.fillText(label, x + keyW / 2, top + rowH * 0.4);
-
-    ctx.font = `${Math.round(rowH * 0.2)}px system-ui, sans-serif`;
-    ctx.fillText(`[${ANSWER_KEYS[i]}]`, x + keyW / 2, top + rowH * 0.75);
+    ctx.font = `bold ${Math.round(rowH * 0.5)}px system-ui, sans-serif`;
+    ctx.fillText(label, x + keyW / 2, top + rowH / 2);
   });
 }
 
