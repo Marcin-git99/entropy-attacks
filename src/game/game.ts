@@ -58,6 +58,12 @@ export interface GameState {
   locked: boolean;
   /** Seconds left on the cannon tracer, so a miss is visible and not just a number going down. */
   flash: number;
+  /**
+   * Screen-shake "juice": a kill jolts the canopy a little, taking a hit jolts it more. Not a timer —
+   * the value itself is the current shake energy, decaying to 0 each frame in `advance`; render.ts
+   * scales its jitter directly off this number, so the shake tapers off rather than cutting abruptly.
+   */
+  shake: number;
   fps: number;
   /** Level 2 state. Null until the player clears Level 1 and enters "repair". */
   repair: RepairState | null;
@@ -193,6 +199,14 @@ export const MAX_ENTROPY = 100;
 /** FR-010/US-02: "entropy rises by 10%" per infection, flat regardless of how it was missed. */
 const INFECTION_ENTROPY = 10;
 
+/**
+ * Screen-shake energy set on impact, decaying at SHAKE_DECAY per second. A kill is a small jolt;
+ * taking a hit (an unstopped threat) is a bigger one — the difference is meant to be felt, not read.
+ */
+const SHAKE_HIT = 0.4;
+const SHAKE_DAMAGE = 0.8;
+const SHAKE_DECAY = 3;
+
 /** FR-012: the wave size — top of the PRD's 12-15 range, tuned by the user. */
 export const WAVE_SIZE = 15;
 
@@ -281,6 +295,7 @@ function destroy(state: GameState, threat: Threat): void {
   state.threat = null;
   state.locked = false;
   state.resolved += 1;
+  state.shake = Math.max(state.shake, SHAKE_HIT);
 }
 
 /** FR-001/FR-014: (re)starts a run at Level 1 — the same call whether this is the first launch or a replay. */
@@ -294,6 +309,7 @@ function startRun(state: GameState): void {
   state.resolved = 0;
   state.locked = false;
   state.flash = 0;
+  state.shake = 0;
   state.repair = null;
 }
 
@@ -386,6 +402,7 @@ export function start(canvas: HTMLCanvasElement): void {
     resolved: 0,
     locked: false,
     flash: 0,
+    shake: 0,
     fps: 0,
     repair: null,
   };
@@ -461,6 +478,7 @@ function fireArmedWeapons(state: GameState, controls: Controls): void {
 
 function advance(state: GameState, dt: number): void {
   state.flash = Math.max(0, state.flash - dt);
+  state.shake = Math.max(0, state.shake - SHAKE_DECAY * dt);
 
   if (state.burst !== null) {
     state.burst.age += dt;
@@ -483,6 +501,7 @@ function advance(state: GameState, dt: number): void {
     state.resolved += 1;
     state.threat = null;
     state.locked = false;
+    state.shake = Math.max(state.shake, SHAKE_DAMAGE);
     if (isDefeated(state)) {
       state.phase = "lost"; // FR-013: the canopy has shattered.
     } else if (state.resolved >= WAVE_SIZE) {

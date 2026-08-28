@@ -2,6 +2,7 @@ import {
   BURST_TIME,
   isVisible,
   MAX_ENTROPY,
+  MISTAKE_LOSE,
   MISTAKE_YELLOW,
   RETICLE,
   THREAT_PASS_Z,
@@ -49,6 +50,8 @@ const CANOPY_HEIGHT = 0.72;
 const MARGIN = 0.02;
 /** Threat radius in world units, divided by distance to get its apparent size in the canopy. */
 const THREAT_RADIUS = 0.16;
+/** Screen-shake displacement per unit of `state.shake`, as a fraction of the canopy's own height. */
+const SHAKE_AMPLITUDE = 0.03;
 
 /** Level 2 takes over the whole canvas with its own scene — nothing here belongs to the cockpit. */
 const REPAIR_PHASES: readonly GameState["phase"][] = ["repair", "repaired", "corrupted"];
@@ -447,16 +450,53 @@ function lightFromMistakes(repair: RepairState | null): "red" | "yellow" | "gree
   return repair.mistakes >= MISTAKE_YELLOW ? "yellow" : null;
 }
 
+/**
+ * A pip row per count, echoing `drawAmmo`'s pattern — filled/empty squares read at a glance the way
+ * "3/7" doesn't, and colouring them LIGHT_GREEN/ALERT ties straight into the cockpit's colour legend
+ * (success / danger) instead of leaving the numbers to carry that meaning on their own.
+ */
 function drawRepairProgress(ctx: CanvasRenderingContext2D, server: Box, repair: RepairState, y: number): void {
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.font = `${Math.round(server.h * 0.045)}px ${FONT}`;
-  ctx.fillStyle = INK;
-  ctx.fillText(`POPRAWNE: ${repair.correct}/${WIN_TARGET}`, server.x + server.w * 0.08, y + server.h * 0.06);
-  ctx.fillText(`BŁĘDY: ${repair.mistakes}`, server.x + server.w * 0.08, y + server.h * 0.14);
+  const pad = server.w * 0.08;
+  const width = server.w - pad * 2;
+  const rows: { label: string; total: number; left: number; color: string }[] = [
+    { label: "POPRAWNE", total: WIN_TARGET, left: repair.correct, color: LIGHT_GREEN },
+    { label: "BŁĘDY", total: MISTAKE_LOSE, left: repair.mistakes, color: ALERT },
+  ];
+
+  ctx.save();
+  ctx.lineWidth *= 0.7;
+  rows.forEach(({ label, total, left, color }, row) => {
+    const rowTop = y + server.h * (0.02 + row * 0.15);
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = `${Math.round(server.h * 0.045)}px ${FONT}`;
+    ctx.fillStyle = INK;
+    ctx.fillText(label, server.x + pad, rowTop);
+
+    const pipY = rowTop + server.h * 0.06;
+    const step = width / total;
+    const pipWidth = step * 0.62;
+    const pipHeight = server.h * 0.07;
+    for (let i = 0; i < total; i += 1) {
+      const px = server.x + pad + i * step;
+      ctx.beginPath();
+      ctx.rect(px, pipY, pipWidth, pipHeight);
+      ctx.fillStyle = i < left ? color : PAPER;
+      ctx.fill();
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
 }
 
 function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState): void {
+  ctx.save();
+  if (state.shake > 0) {
+    const amp = canopy.h * SHAKE_AMPLITUDE * state.shake;
+    ctx.translate((Math.random() * 2 - 1) * amp, (Math.random() * 2 - 1) * amp);
+  }
+
   ctx.beginPath();
   ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
   ctx.stroke();
@@ -500,6 +540,7 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
 
   drawCrosshair(ctx, centreX, centreY, unit, state.locked);
   drawCracks(ctx, canopy, state.entropy);
+  ctx.restore();
 }
 
 /**
