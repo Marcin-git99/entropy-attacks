@@ -16,14 +16,26 @@ import { QUESTIONS } from "./questions";
 /** Flat black-outline style, per the PRD non-goal that rules out photorealistic art. */
 const INK = "#000";
 const PAPER = "#fff";
-/** Red carries meaning everywhere: a lit crosshair, the radar blip, the entropy fill, the cracks. */
+/** A dimming scrim behind modal text (title/wave-cleared/lost) — PAPER, not quite opaque. */
+const OVERLAY_BG = "rgba(255, 255, 255, 0.9)";
+
+/**
+ * The cockpit's whole accent vocabulary — four colours, each with exactly one meaning, reused
+ * everywhere rather than picked per screen:
+ *   ALERT (red)         — danger and the player's own combat action, which read as one thing in
+ *                          this game: threat blip, entropy fill, cracks, tracers, burst, the locked
+ *                          crosshair, a wrong Level 2 answer, the corrupted status light.
+ *   LIGHT_GREEN         — success: a correct Level 2 answer, the repaired status light.
+ *   LIGHT_YELLOW        — warning: the mistake-threshold status light. Nothing else uses yellow.
+ *   ENERGY_COLOR (blue) — the one cool colour, reserved for the energy gauge alone, so its reading
+ *                         never competes visually with the red/green/yellow verdict colours above.
+ * SCREEN_GREEN sits outside this vocabulary on purpose: it is the device's screen-glass colour from
+ * the "Ręka level2" reference, not a status a player reads meaning into.
+ */
 const ALERT = "#d40000";
-/** The one cool colour in the cockpit, reserved for the energy fill — per the reference mockup. */
 const ENERGY_COLOR = "#1e9be0";
-/** Level 2's traffic-light palette, per the "Ręka level2" reference. */
 const LIGHT_YELLOW = "#e0b31e";
 const LIGHT_GREEN = "#1e9e46";
-/** The device screen in the reference art — its own green, distinct from the status light's. */
 const SCREEN_GREEN = "#2ecc59";
 /**
  * One typeface for the whole cockpit — a monospace readout instead of the OS-default sans, so
@@ -97,7 +109,7 @@ function drawOverlay(
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
-  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.fillStyle = OVERLAY_BG;
   ctx.fill();
 
   ctx.fillStyle = INK;
