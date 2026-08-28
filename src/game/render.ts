@@ -448,6 +448,7 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
   ctx.beginPath();
   ctx.roundRect(canopy.x, canopy.y, canopy.w, canopy.h, canopy.h * 0.14);
   ctx.stroke();
+  drawHudCorners(ctx, canopy, canopy.h * 0.05, canopy.h * 0.09);
 
   // Threats live in view-relative space: steering pans the view, so the threat slides across the canopy
   // while the crosshair stays nailed to the centre.
@@ -487,6 +488,27 @@ function drawCanopy(ctx: CanvasRenderingContext2D, canopy: Box, state: GameState
 
   drawCrosshair(ctx, centreX, centreY, unit, state.locked);
   drawCracks(ctx, canopy, state.entropy);
+}
+
+/**
+ * Viewfinder-style corner brackets, inset from a panel's true corners — a HUD cue borrowed from
+ * camera/targeting overlays. Cosmetic frame only, so it draws on the panel's outer edge and never
+ * competes with the threat/crosshair it surrounds.
+ */
+function drawHudCorners(ctx: CanvasRenderingContext2D, box: Box, inset: number, arm: number): void {
+  const corners: [number, number, number, number][] = [
+    [box.x + inset, box.y + inset, 1, 1],
+    [box.x + box.w - inset, box.y + inset, -1, 1],
+    [box.x + inset, box.y + box.h - inset, 1, -1],
+    [box.x + box.w - inset, box.y + box.h - inset, -1, -1],
+  ];
+  corners.forEach(([x, y, sx, sy]) => {
+    ctx.beginPath();
+    ctx.moveTo(x + arm * sx, y);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x, y + arm * sy);
+    ctx.stroke();
+  });
 }
 
 /**
@@ -745,6 +767,15 @@ function drawRadar(ctx: CanvasRenderingContext2D, panel: Box, threat: Threat | n
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.stroke();
+
+  // Compass ticks at the four cardinal points — instrument dressing, not a real heading readout.
+  for (let deg = 0; deg < 360; deg += 90) {
+    const angle = (deg * Math.PI) / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle) * radius * 0.86, cy + Math.sin(angle) * radius * 0.86);
+    ctx.lineTo(cx + Math.cos(angle) * radius * 1.08, cy + Math.sin(angle) * radius * 1.08);
+    ctx.stroke();
+  }
 
   // The ship, at the centre of its own radar.
   ctx.beginPath();
