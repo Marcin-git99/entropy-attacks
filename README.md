@@ -4,6 +4,8 @@ A browser fighter-cockpit game shown at a conference booth. The player defends a
 creatures — a dramatization of Indirect Prompt Injection — using a radar, a laser cannon and a
 homing rocket, all played entirely on the numeric keypad.
 
+**[Play it live](https://entropy-attacks.turolmar1-775.workers.dev)**
+
 Product requirements live in [`context/foundation/prd.md`](context/foundation/prd.md); project
 conventions and constraints live in [`CLAUDE.md`](CLAUDE.md).
 
